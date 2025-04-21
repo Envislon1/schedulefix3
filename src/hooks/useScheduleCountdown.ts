@@ -1,10 +1,13 @@
+
 import { useState, useEffect, useRef } from 'react';
+import { manuallyTriggerScheduleCheck } from '../utils/scheduleUtils';
 
 // This hook calculates a countdown to a scheduled event
-export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string) => {
+export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, systemId?: string) => {
   const [countdown, setCountdown] = useState<string>('');
   const lastCalculationRef = useRef<number>(0);
   const triggerRef = useRef<boolean>(false);
+  const hasTriggeredRef = useRef<boolean>(false);
 
   useEffect(() => {
     const calculateTimeRemaining = () => {
@@ -65,12 +68,24 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string) => 
       if (timeDiff <= 0) {
         triggerRef.current = true;
         console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Exact trigger time reached.`);
+        
+        // Execute auto-trigger if conditions are met and we haven't triggered yet
+        if (systemId && !hasTriggeredRef.current) {
+          executeAutoTrigger();
+        }
+        
         return 'Triggering...';
       }
       
       if (timeDiff < 60000) { // Less than a minute
         triggerRef.current = true;
         console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Less than a minute away.`);
+        
+        // Execute auto-trigger if conditions are met and we haven't triggered yet
+        if (systemId && !hasTriggeredRef.current) {
+          executeAutoTrigger();
+        }
+        
         return 'Triggering soon';
       }
       
@@ -96,6 +111,45 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string) => 
       }
     };
 
+    // Function to execute the auto trigger by calling the schedule runner
+    const executeAutoTrigger = async () => {
+      if (!systemId || hasTriggeredRef.current) return;
+      
+      console.log(`AUTO-TRIGGER ATTEMPT for ${triggerTime} on ${dayOfWeek}`);
+      console.log('Trigger conditions met:', {
+        triggerState: triggerRef.current,
+        currentState: countdown,
+        triggerTime,
+        dayOfWeek,
+        systemId
+      });
+      
+      try {
+        hasTriggeredRef.current = true; // Mark as triggered to prevent duplicate calls
+        
+        // Call the manual trigger function with execute flag set to true
+        const result = await manuallyTriggerScheduleCheck(
+          systemId,
+          triggerTime,
+          dayOfWeek,
+          true // Execute the schedule
+        );
+        
+        console.log('Auto-trigger executed successfully:', result);
+        
+        // Reset the triggered flag after 5 minutes to allow future triggers
+        setTimeout(() => {
+          hasTriggeredRef.current = false;
+        }, 5 * 60 * 1000);
+      } catch (error) {
+        console.error('Failed to execute auto-trigger:', error);
+        // Reset the triggered flag after failure (with a shorter timeout)
+        setTimeout(() => {
+          hasTriggeredRef.current = false;
+        }, 60 * 1000);
+      }
+    };
+
     // Initial calculation
     setCountdown(calculateTimeRemaining());
     
@@ -110,19 +164,6 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string) => 
         const quickInterval = setInterval(() => {
           const nowState = calculateTimeRemaining();
           setCountdown(nowState);
-          
-          // Auto-trigger execution when we hit the exact time
-          const shouldAutoTrigger = triggerRef.current && (nowState === 'Triggering...' || nowState === 'Triggering soon');
-      
-          if (shouldAutoTrigger) {
-            console.log(`AUTO-TRIGGER ATTEMPT for ${triggerTime} on ${dayOfWeek}`);
-            console.log('Trigger conditions met:', {
-              triggerState: triggerRef.current,
-              currentState: nowState,
-              triggerTime,
-              dayOfWeek
-            });
-          }
         }, 1000); // Check every second when close to trigger time
         
         // Clean up the quick interval after 2 minutes
@@ -133,7 +174,7 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string) => 
     }, 10000); // Update every 10 seconds normally (increased frequency from 30s)
     
     return () => clearInterval(interval);
-  }, [triggerTime, dayOfWeek]);
+  }, [triggerTime, dayOfWeek, systemId, countdown]);
 
   return countdown;
 };
