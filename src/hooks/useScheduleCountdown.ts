@@ -1,7 +1,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { manuallyTriggerScheduleCheck } from '../utils/scheduleUtils';
-import { toast } from '@/hooks/use-toast';
+import { toast as shadcnToast } from '@/hooks/use-toast';
+import { toast as sonnerToast } from 'sonner';
 
 // This hook calculates a countdown to a scheduled event
 export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, systemId?: string) => {
@@ -71,6 +72,16 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         triggerRef.current = true;
         console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Exact trigger time reached.`);
         
+        // Use both toast systems for maximum visibility
+        sonnerToast.success(`Schedule Triggered: ${dayOfWeek} at ${triggerTime}`, {
+          description: 'Exact trigger time reached'
+        });
+        
+        shadcnToast({
+          title: "Schedule Triggered",
+          description: `Exact trigger time reached for ${dayOfWeek} at ${triggerTime}`,
+        });
+        
         // Execute auto-trigger if conditions are met and we haven't triggered yet
         if (systemId && !hasTriggeredRef.current) {
           executeAutoTrigger();
@@ -83,10 +94,15 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         triggerRef.current = true;
         console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Less than a minute away.`);
         
-        // Show "triggering soon" toast only once
+        // Show "triggering soon" toast only once - use both toast systems for visibility
         if (!triggeringSoonNotifiedRef.current && systemId) {
           triggeringSoonNotifiedRef.current = true;
-          toast({
+          
+          sonnerToast.info(`Schedule Triggering Soon: ${dayOfWeek} at ${triggerTime}`, {
+            description: 'Preparing to execute scheduled action'
+          });
+          
+          shadcnToast({
             title: "Schedule Triggering Soon",
             description: `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`,
           });
@@ -137,8 +153,13 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         systemId
       });
       
-      // Show toast notification when triggering
-      toast({
+      // Show toast notification when triggering - use both toast systems
+      sonnerToast.loading(`Executing scheduled action for ${dayOfWeek} at ${triggerTime}`, {
+        id: 'schedule-execution',
+        duration: 3000
+      });
+      
+      shadcnToast({
         title: "Schedule Triggered",
         description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
       });
@@ -156,8 +177,13 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         
         console.log('Auto-trigger executed successfully:', result);
         
-        // Show success toast notification
-        toast({
+        // Show success toast notification using both systems
+        sonnerToast.success('Schedule executed successfully', {
+          id: 'schedule-execution',
+          description: `The scheduled action for ${dayOfWeek} at ${triggerTime} completed`
+        });
+        
+        shadcnToast({
           title: "Schedule Executed",
           description: "The scheduled action has been completed successfully",
         });
@@ -169,8 +195,13 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
       } catch (error) {
         console.error('Failed to execute auto-trigger:', error);
         
-        // Show error toast notification
-        toast({
+        // Show error toast notification using both systems
+        sonnerToast.error('Failed to execute scheduled action', {
+          id: 'schedule-execution',
+          description: error instanceof Error ? error.message : 'Unknown error'
+        });
+        
+        shadcnToast({
           title: "Schedule Error",
           description: "Failed to execute the scheduled action",
           variant: "destructive",
@@ -185,6 +216,12 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
 
     // Initial calculation
     setCountdown(calculateTimeRemaining());
+    
+    // Show startup toast message to confirm the hook is working
+    sonnerToast.info(`Schedule monitoring started`, {
+      description: `Monitoring ${triggerTime} on ${dayOfWeek}`,
+      duration: 3000
+    });
     
     // Update more frequently as we get closer to the trigger time
     const interval = setInterval(() => {
