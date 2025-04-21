@@ -115,11 +115,6 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
     const executeAutoTrigger = async () => {
       if (!systemId || hasTriggeredRef.current) return;
       
-      toast({
-        title: "Schedule Triggered",
-        description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
-      });
-      
       console.log(`AUTO-TRIGGER ATTEMPT for ${triggerTime} on ${dayOfWeek}`);
       console.log('Trigger conditions met:', {
         triggerState: triggerRef.current,
@@ -127,6 +122,12 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         triggerTime,
         dayOfWeek,
         systemId
+      });
+      
+      // Show toast notification when triggering
+      toast({
+        title: "Schedule Triggered",
+        description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
       });
       
       try {
@@ -142,6 +143,7 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         
         console.log('Auto-trigger executed successfully:', result);
         
+        // Show success toast notification
         toast({
           title: "Schedule Executed",
           description: "The scheduled action has been completed successfully",
@@ -154,6 +156,7 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
       } catch (error) {
         console.error('Failed to execute auto-trigger:', error);
         
+        // Show error toast notification
         toast({
           title: "Schedule Error",
           description: "Failed to execute the scheduled action",
@@ -244,11 +247,6 @@ export const calculateCountdown = (triggerTime: string, dayOfWeek: string): stri
   
   if (diff < 60000) { // Less than a minute
     return 'Triggering soon';
-    triggerRef.current = true;
-    toast({
-        title: "Triggering soon",
-        description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
-      });
   }
   
   // Convert to days, hours, minutes
