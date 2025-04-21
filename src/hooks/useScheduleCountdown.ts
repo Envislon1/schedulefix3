@@ -244,6 +244,7 @@ export const calculateCountdown = (triggerTime: string, dayOfWeek: string): stri
   
   if (diff < 60000) { // Less than a minute
     return 'Triggering soon1';
+    triggerRef.current = true;
     toast({
         title: "Schedule Triggered",
         description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
