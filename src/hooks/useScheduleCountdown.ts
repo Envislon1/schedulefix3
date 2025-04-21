@@ -86,11 +86,10 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         // Show "triggering soon" toast only once
         if (!triggeringSoonNotifiedRef.current && systemId) {
           triggeringSoonNotifiedRef.current = true;
-          {triggerRef.current && !hasTriggeredRef.current && (
-  <div className="bg-yellow-100 text-yellow-800 p-2 rounded mb-2">
-    Preparing to execute scheduled action for {dayOfWeek} at {triggerTime}
-  </div>
-)}
+          toast({
+            title: "Schedule Triggering Soon",
+            description: `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`,
+          });
         }
         
         // Execute auto-trigger if conditions are met and we haven't triggered yet
@@ -261,6 +260,9 @@ export const calculateCountdown = (triggerTime: string, dayOfWeek: string): stri
   
   if (diff < 60000) { // Less than a minute
     return 'Triggering soon';
+    <div className="bg-yellow-100 text-yellow-800 p-2 rounded mb-2">
+    Preparing to execute scheduled action for {dayOfWeek} at {triggerTime}
+  </div>
   }
   
   // Convert to days, hours, minutes
