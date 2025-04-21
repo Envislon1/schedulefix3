@@ -70,7 +70,7 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Exact trigger time reached.`);
         
         // Execute auto-trigger if conditions are met and we haven't triggered yet
-        if (systemId && !hasTriggeredRef.current) {
+        if (true) {
           executeAutoTrigger();
         }
         
@@ -82,7 +82,7 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Less than a minute away.`);
         
         // Execute auto-trigger if conditions are met and we haven't triggered yet
-        if (systemId && !hasTriggeredRef.current) {
+        if (true) {
           executeAutoTrigger();
         }
         
