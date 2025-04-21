@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef } from 'react';
 import { manuallyTriggerScheduleCheck } from '../utils/scheduleUtils';
 import { toast } from '@/hooks/use-toast';
@@ -8,6 +9,7 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
   const lastCalculationRef = useRef<number>(0);
   const triggerRef = useRef<boolean>(false);
   const hasTriggeredRef = useRef<boolean>(false);
+  const triggeringSoonNotifiedRef = useRef<boolean>(false);
 
   useEffect(() => {
     const calculateTimeRemaining = () => {
@@ -81,6 +83,15 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         triggerRef.current = true;
         console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Less than a minute away.`);
         
+        // Show "triggering soon" toast only once
+        if (!triggeringSoonNotifiedRef.current && systemId) {
+          triggeringSoonNotifiedRef.current = true;
+          toast({
+            title: "Schedule Triggering Soon",
+            description: `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`,
+          });
+        }
+        
         // Execute auto-trigger if conditions are met and we haven't triggered yet
         if (systemId && !hasTriggeredRef.current) {
           executeAutoTrigger();
@@ -89,6 +100,8 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         return 'Triggering soon';
       }
       
+      // Reset the triggering soon notification flag when we're not close to triggering
+      triggeringSoonNotifiedRef.current = false;
       triggerRef.current = false;
       
       // Convert to days, hours, minutes
@@ -265,6 +278,6 @@ export const calculateCountdown = (triggerTime: string, dayOfWeek: string): stri
   } else if (mins > 0) {
     return `in ${mins}m`;
   } else {
-    return 'Triggering soon2';
+    return 'Triggering soon';
   }
 };
