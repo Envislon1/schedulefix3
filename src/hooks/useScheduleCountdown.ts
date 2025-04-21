@@ -1,6 +1,6 @@
-
 import { useState, useEffect, useRef } from 'react';
 import { manuallyTriggerScheduleCheck } from '../utils/scheduleUtils';
+import { toast } from '@/hooks/use-toast';
 
 // This hook calculates a countdown to a scheduled event
 export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, systemId?: string) => {
@@ -115,6 +115,11 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
     const executeAutoTrigger = async () => {
       if (!systemId || hasTriggeredRef.current) return;
       
+      toast({
+        title: "Schedule Triggered",
+        description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
+      });
+      
       console.log(`AUTO-TRIGGER ATTEMPT for ${triggerTime} on ${dayOfWeek}`);
       console.log('Trigger conditions met:', {
         triggerState: triggerRef.current,
@@ -137,12 +142,24 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         
         console.log('Auto-trigger executed successfully:', result);
         
+        toast({
+          title: "Schedule Executed",
+          description: "The scheduled action has been completed successfully",
+        });
+        
         // Reset the triggered flag after 5 minutes to allow future triggers
         setTimeout(() => {
           hasTriggeredRef.current = false;
         }, 5 * 60 * 1000);
       } catch (error) {
         console.error('Failed to execute auto-trigger:', error);
+        
+        toast({
+          title: "Schedule Error",
+          description: "Failed to execute the scheduled action",
+          variant: "destructive",
+        });
+        
         // Reset the triggered flag after failure (with a shorter timeout)
         setTimeout(() => {
           hasTriggeredRef.current = false;
