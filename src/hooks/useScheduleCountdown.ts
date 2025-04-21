@@ -86,10 +86,11 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         // Show "triggering soon" toast only once
         if (!triggeringSoonNotifiedRef.current && systemId) {
           triggeringSoonNotifiedRef.current = true;
-          toast({
-            title: "Schedule Triggering Soon",
-            description: `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`,
-          });
+          {triggerRef.current && !hasTriggeredRef.current && (
+  <div className="bg-yellow-100 text-yellow-800 p-2 rounded mb-2">
+    Preparing to execute scheduled action for {dayOfWeek} at {triggerTime}
+  </div>
+)}
         }
         
         // Execute auto-trigger if conditions are met and we haven't triggered yet
