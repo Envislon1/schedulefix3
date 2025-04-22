@@ -1,7 +1,9 @@
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { getTimeDifferenceText } from '@/utils/timeUtils';
-import { CalendarClock } from 'lucide-react';
+import { CalendarClock, Bell } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
+import { useScheduleCountdown } from '@/hooks/useScheduleCountdown';
 
 interface ScheduleStatusIndicatorProps {
   triggerTime: string;
@@ -19,6 +21,9 @@ export const ScheduleStatusIndicator: React.FC<ScheduleStatusIndicatorProps> = (
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const currentDay = dayNames[now.getUTCDay()];
   const isTodayScheduled = dayOfWeek === currentDay;
+  
+  // Use the countdown hook to get timing information and trigger state
+  const { countdown, triggerState, hasTriggered } = useScheduleCountdown(triggerTime, dayOfWeek, systemId);
   
   // Parse the trigger time
   const [hours, minutes] = triggerTime.split(':').map(Number);
@@ -60,9 +65,55 @@ export const ScheduleStatusIndicator: React.FC<ScheduleStatusIndicatorProps> = (
     }
   }
 
+  // Display countdown if available
+  if (countdown && countdown !== 'Invalid time' && countdown !== 'Invalid day') {
+    statusText = countdown;
+  }
+
+  // Change status color if triggered
+  if (triggerState) {
+    statusColor = 'bg-orange-100 text-orange-800';
+    statusText = 'Triggering...';
+  }
+
+  if (hasTriggered) {
+    statusColor = 'bg-green-100 text-green-800';
+    statusText = 'Executed';
+  }
+
+  // Update the title bar with a notification when triggered
+  useEffect(() => {
+    if (triggerState && !hasTriggered) {
+      // Display toast notification
+      toast({
+        title: "Schedule Triggered",
+        description: `The schedule for ${dayOfWeek} at ${triggerTime} is running now`,
+      });
+      
+      // Update document title temporarily
+      const originalTitle = document.title;
+      document.title = `🔔 Schedule Triggered - ${originalTitle}`;
+      
+      // Reset title after 10 seconds
+      const titleTimeout = setTimeout(() => {
+        document.title = originalTitle;
+      }, 10000);
+      
+      return () => {
+        clearTimeout(titleTimeout);
+        document.title = originalTitle;
+      };
+    }
+  }, [triggerState, hasTriggered, dayOfWeek, triggerTime]);
+
   return (
     <div className="flex items-center space-x-2">
-      <CalendarClock className="h-4 w-4 text-orange-500" />
+      {triggerState && (
+        <Bell className="h-4 w-4 text-orange-500 animate-pulse" />
+      )}
+      {!triggerState && (
+        <CalendarClock className="h-4 w-4 text-orange-500" />
+      )}
       <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColor}`}>
         {statusText}
       </div>

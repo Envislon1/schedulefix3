@@ -5,7 +5,7 @@ import { forceExecuteSchedule } from '@/utils/scheduleUtils';
 import { toast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Bell } from 'lucide-react';
 
 interface ScheduleDirectExecutorProps {
   systemId: string;
@@ -13,6 +13,7 @@ interface ScheduleDirectExecutorProps {
 
 export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ systemId }) => {
   const [isExecuting, setIsExecuting] = useState(false);
+  const [executingScheduleId, setExecutingScheduleId] = useState<string | null>(null);
   
   // Fetch all active schedules for this system
   const { data: schedules, isLoading, error, refetch } = useQuery({
@@ -34,12 +35,17 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
   const handleExecuteSchedule = async (scheduleId: string) => {
     try {
       setIsExecuting(true);
+      setExecutingScheduleId(scheduleId);
       
       // Show toast to indicate execution is starting
       toast({
         title: "Executing Schedule",
         description: "Running the scheduled action now...",
       });
+      
+      // Flash the title bar to get attention
+      const originalTitle = document.title;
+      document.title = "⚡ Executing Power Schedule...";
       
       const result = await forceExecuteSchedule(scheduleId, systemId);
       
@@ -48,6 +54,12 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
         title: "Schedule Executed",
         description: `Power has been turned ${result.schedule.state ? 'ON' : 'OFF'} successfully.`,
       });
+      
+      // Update title to show completion for a few seconds
+      document.title = `✅ Power ${result.schedule.state ? 'ON' : 'OFF'} - ${originalTitle}`;
+      setTimeout(() => {
+        document.title = originalTitle;
+      }, 5000);
       
       // Refresh the schedules list after execution
       refetch();
@@ -59,8 +71,15 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
         variant: "destructive",
       });
       console.error("Failed to execute schedule:", error);
+      
+      // Update title to show error
+      document.title = "❌ Schedule Error";
+      setTimeout(() => {
+        document.title = document.title.replace("❌ Schedule Error", "");
+      }, 5000);
     } finally {
       setIsExecuting(false);
+      setExecutingScheduleId(null);
     }
   };
   
@@ -107,15 +126,20 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
               size="sm"
               disabled={isExecuting}
               onClick={() => handleExecuteSchedule(schedule.id)}
-              className="border-orange-500/40 text-orange-500 hover:bg-orange-500/20"
+              className={`border-orange-500/40 text-orange-500 hover:bg-orange-500/20 ${
+                executingScheduleId === schedule.id ? 'animate-pulse bg-orange-500/10' : ''
+              }`}
             >
-              {isExecuting ? (
+              {isExecuting && executingScheduleId === schedule.id ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Running...
                 </>
               ) : (
-                'Execute Now'
+                <>
+                  <Bell className="mr-2 h-4 w-4" />
+                  Execute Now
+                </>
               )}
             </Button>
           </div>
