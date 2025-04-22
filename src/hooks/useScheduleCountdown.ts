@@ -3,25 +3,91 @@ import { useState, useEffect, useRef } from 'react';
 import { manuallyTriggerScheduleCheck } from '../utils/scheduleUtils';
 import { toast as shadcnToast } from '@/hooks/use-toast';
 import { toast as sonnerToast } from 'sonner';
+import { getTimeDifferenceText } from '@/utils/timeUtils';
 
-// Debug function to make toast visibility obvious in console
-const debugToast = (type: string, title: string, message: string) => {
-  console.log(`=== TOAST NOTIFICATION (${type}) ===`);
+// Debug function that guarantees toast visibility in console
+function debugToast(type: string, title: string, message: string) {
+  const timestamp = new Date().toISOString();
+  console.log(`=== TOAST NOTIFICATION (${type}) at ${timestamp} ===`);
   console.log(`Title: ${title}`);
   console.log(`Message: ${message}`);
   console.log('===================================');
-};
+  
+  // Try both toast systems to ensure at least one works
+  try {
+    sonnerToast[type === 'SUCCESS' ? 'success' : type === 'ERROR' ? 'error' : type === 'LOADING' ? 'loading' : 'info'](
+      title,
+      { description: message, duration: 5000 }
+    );
+  } catch (e) {
+    console.error(`Failed to show Sonner toast: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
+  try {
+    shadcnToast({
+      title: title,
+      description: message,
+      variant: type === 'ERROR' ? 'destructive' : 'default',
+    });
+  } catch (e) {
+    console.error(`Failed to show Shadcn toast: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+interface CountdownState {
+  countdown: string;
+  lastCalculation: number;
+  triggerState: boolean;
+  hasTriggered: boolean;
+}
 
 // This hook calculates a countdown to a scheduled event
-export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, systemId?: string) => {
-  const [countdown, setCountdown] = useState<string>('');
+export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, systemId?: string): CountdownState => {
+  const [countdownState, setCountdownState] = useState<CountdownState>({
+    countdown: '',
+    lastCalculation: 0,
+    triggerState: false,
+    hasTriggered: false
+  });
   const lastCalculationRef = useRef<number>(0);
   const triggerRef = useRef<boolean>(false);
   const hasTriggeredRef = useRef<boolean>(false);
   const triggeringSoonNotifiedRef = useRef<boolean>(false);
+  const hookInitializedRef = useRef<boolean>(false);
+  const consoleLogCountRef = useRef<number>(0);
+
+  // Enhanced logging function that throttles logs but ensures critical ones are shown
+  const logDebug = (message: string, data: any = {}, force: boolean = false) => {
+    consoleLogCountRef.current += 1;
+    const shouldLog = force || consoleLogCountRef.current % 10 === 0;
+    
+    if (shouldLog || data.critical) {
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}] SCHEDULE DEBUG - ${message}`, {
+        triggerTime,
+        dayOfWeek,
+        systemId,
+        ...data,
+        hasTriggered: hasTriggeredRef.current,
+        triggerState: triggerRef.current,
+        consoleLogCount: consoleLogCountRef.current
+      });
+    }
+    
+    if (data.critical) {
+      console.trace(`Critical schedule event trace for ${triggerTime} on ${dayOfWeek}`);
+    }
+  };
 
   useEffect(() => {
     console.log(`useScheduleCountdown initialized for ${triggerTime} on ${dayOfWeek}${systemId ? ` (System ID: ${systemId})` : ''}`);
+    console.trace(`useScheduleCountdown hook initialization trace`);
+    
+    // Reset internal state on prop changes
+    triggerRef.current = false;
+    hasTriggeredRef.current = false;
+    triggeringSoonNotifiedRef.current = false;
+    lastCalculationRef.current = 0;
     
     const calculateTimeRemaining = () => {
       const now = new Date();
@@ -31,18 +97,13 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
       const [hours, minutes] = triggerTime.split(':').map(Number);
       
       if (isNaN(hours) || isNaN(minutes)) {
-        console.error(`Invalid trigger time format: "${triggerTime}"`);
+        logDebug(`Invalid trigger time format: "${triggerTime}"`, { critical: true });
         return 'Invalid time format';
       }
       
       // Create target date with proper UTC handling
       const targetDate = new Date();
       targetDate.setUTCHours(hours, minutes, 0, 0);
-      
-      // If the target time has passed today, move to next occurrence
-      if (targetDate.getTime() < now.getTime()) {
-        targetDate.setUTCDate(targetDate.getUTCDate() + 1);
-      }
       
       // Calculate days until next occurrence based on day of week
       const currentDay = now.getUTCDay();
@@ -53,8 +114,13 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
       const targetDay = dayMap[dayOfWeek];
       
       if (targetDay === undefined) {
-        console.error(`Invalid day of week: "${dayOfWeek}"`);
+        logDebug(`Invalid day of week: "${dayOfWeek}"`, { critical: true });
         return 'Invalid day format';
+      }
+      
+      // If the target time has passed today, move to next occurrence
+      if (targetDate.getTime() < now.getTime()) {
+        targetDate.setUTCDate(targetDate.getUTCDate() + 1);
       }
       
       let daysUntil = targetDay - currentDay;
@@ -67,42 +133,28 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
       let timeDiff = targetDate.getTime() - now.getTime();
       
       // Detailed logging for debugging
-      console.log(`Schedule calculation for ${triggerTime} on ${dayOfWeek}:`, {
+      logDebug(`Schedule calculation for ${triggerTime} on ${dayOfWeek}:`, {
         now: now.toISOString(),
         targetDate: targetDate.toISOString(),
         currentDay,
         targetDay,
         daysUntil,
         diffMs: timeDiff,
-        diffMinutes: Math.floor(timeDiff / (1000 * 60))
+        diffMinutes: Math.floor(timeDiff / (1000 * 60)),
+        force: true
       });
       
       // Important: Set trigger state when we're extremely close to or past the trigger time
       if (timeDiff <= 0) {
         triggerRef.current = true;
-        console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Exact trigger time reached.`);
+        logDebug(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Exact trigger time reached.`, { critical: true });
         
         // Use both toast systems and debug console
         debugToast('SUCCESS', 'Schedule Triggered', `Exact trigger time reached for ${dayOfWeek} at ${triggerTime}`);
-        try {
-          sonnerToast.success(`Schedule Triggered: ${dayOfWeek} at ${triggerTime}`, {
-            description: 'Exact trigger time reached'
-          });
-        } catch (e) {
-          console.error('Failed to show Sonner toast:', e);
-        }
-        
-        try {
-          shadcnToast({
-            title: "Schedule Triggered",
-            description: `Exact trigger time reached for ${dayOfWeek} at ${triggerTime}`,
-          });
-        } catch (e) {
-          console.error('Failed to show Shadcn toast:', e);
-        }
         
         // Execute auto-trigger if conditions are met and we haven't triggered yet
         if (systemId && !hasTriggeredRef.current) {
+          logDebug(`Auto-triggering execution due to exact time match`, { critical: true });
           executeAutoTrigger();
         }
         
@@ -111,42 +163,37 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
       
       if (timeDiff < 60000) { // Less than a minute
         triggerRef.current = true;
-        console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Less than a minute away.`);
+        logDebug(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Less than a minute away.`, { critical: true });
         
         // Show "triggering soon" toast only once - use both toast systems for visibility
         if (!triggeringSoonNotifiedRef.current && systemId) {
           triggeringSoonNotifiedRef.current = true;
           
           debugToast('INFO', 'Schedule Triggering Soon', `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`);
-          try {
-            sonnerToast.info(`Schedule Triggering Soon: ${dayOfWeek} at ${triggerTime}`, {
-              description: 'Preparing to execute scheduled action'
-            });
-          } catch (e) {
-            console.error('Failed to show Sonner toast:', e);
-          }
           
-          try {
-            shadcnToast({
-              title: "Schedule Triggering Soon",
-              description: `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`,
-            });
-          } catch (e) {
-            console.error('Failed to show Shadcn toast:', e);
-          }
-        }
-        
-        // Execute auto-trigger if conditions are met and we haven't triggered yet
-        if (systemId && !hasTriggeredRef.current) {
-          executeAutoTrigger();
+          // Add a small delay before attempting execution to ensure notification is visible
+          setTimeout(() => {
+            // Execute auto-trigger if conditions are met and we haven't triggered yet
+            if (systemId && !hasTriggeredRef.current) {
+              logDebug(`Auto-triggering execution after slight delay from "triggering soon" state`, { critical: true });
+              executeAutoTrigger();
+            }
+          }, 2000);
         }
         
         return 'Triggering soon';
       }
       
       // Reset the triggering soon notification flag when we're not close to triggering
-      triggeringSoonNotifiedRef.current = false;
-      triggerRef.current = false;
+      if (triggeringSoonNotifiedRef.current && timeDiff > 120000) { // > 2 minutes away
+        logDebug(`Resetting triggering soon notification flag as we're now ${Math.floor(timeDiff / 60000)} minutes away`, { force: true });
+        triggeringSoonNotifiedRef.current = false;
+      }
+      
+      if (triggerRef.current && timeDiff > 120000) { // > 2 minutes away
+        logDebug(`Resetting trigger state as we're now ${Math.floor(timeDiff / 60000)} minutes away`, { force: true });
+        triggerRef.current = false;
+      }
       
       // Convert to days, hours, minutes
       const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
@@ -170,39 +217,26 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
 
     // Function to execute the auto trigger by calling the schedule runner
     const executeAutoTrigger = async () => {
-      if (!systemId || hasTriggeredRef.current) return;
+      if (!systemId || hasTriggeredRef.current) {
+        logDebug(`Auto-trigger prevented - ${!systemId ? 'No systemId' : 'Already triggered'}`, { force: true });
+        return;
+      }
       
-      console.log(`AUTO-TRIGGER ATTEMPT for ${triggerTime} on ${dayOfWeek}`);
-      console.log('Trigger conditions met:', {
+      logDebug(`AUTO-TRIGGER ATTEMPT for ${triggerTime} on ${dayOfWeek}`, { 
+        critical: true,
         triggerState: triggerRef.current,
-        currentState: countdown,
-        triggerTime,
-        dayOfWeek,
+        currentState: countdownState.countdown,
         systemId
       });
       
-      // Show toast notification when triggering - use both toast systems
+      // Show toast notification when triggering
       debugToast('LOADING', 'Schedule Triggered', `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`);
-      try {
-        sonnerToast.loading(`Executing scheduled action for ${dayOfWeek} at ${triggerTime}`, {
-          id: 'schedule-execution',
-          duration: 3000
-        });
-      } catch (e) {
-        console.error('Failed to show Sonner toast:', e);
-      }
-      
-      try {
-        shadcnToast({
-          title: "Schedule Triggered",
-          description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
-        });
-      } catch (e) {
-        console.error('Failed to show Shadcn toast:', e);
-      }
       
       try {
         hasTriggeredRef.current = true; // Mark as triggered to prevent duplicate calls
+        setCountdownState(prev => ({ ...prev, hasTriggered: true }));
+        
+        logDebug(`Calling manuallyTriggerScheduleCheck with execute=true`, { critical: true });
         
         // Call the manual trigger function with execute flag set to true
         const result = await manuallyTriggerScheduleCheck(
@@ -212,103 +246,104 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
           true // Execute the schedule
         );
         
-        console.log('Auto-trigger executed successfully:', result);
+        logDebug(`Auto-trigger executed successfully:`, { 
+          critical: true,
+          result
+        });
         
-        // Show success toast notification using both systems
+        // Show success toast notification
         debugToast('SUCCESS', 'Schedule Executed', `The scheduled action for ${dayOfWeek} at ${triggerTime} completed`);
-        try {
-          sonnerToast.success('Schedule executed successfully', {
-            id: 'schedule-execution',
-            description: `The scheduled action for ${dayOfWeek} at ${triggerTime} completed`
-          });
-        } catch (e) {
-          console.error('Failed to show Sonner toast:', e);
-        }
-        
-        try {
-          shadcnToast({
-            title: "Schedule Executed",
-            description: "The scheduled action has been completed successfully",
-          });
-        } catch (e) {
-          console.error('Failed to show Shadcn toast:', e);
-        }
         
         // Reset the triggered flag after 5 minutes to allow future triggers
         setTimeout(() => {
+          logDebug(`Resetting hasTriggered flag after timeout period`, { force: true });
           hasTriggeredRef.current = false;
+          setCountdownState(prev => ({ ...prev, hasTriggered: false }));
         }, 5 * 60 * 1000);
       } catch (error) {
-        console.error('Failed to execute auto-trigger:', error);
+        logDebug(`Failed to execute auto-trigger:`, { 
+          critical: true,
+          error: error instanceof Error ? error.message : String(error)
+        });
         
-        // Show error toast notification using both systems
+        // Show error toast notification
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         debugToast('ERROR', 'Schedule Error', `Failed to execute the scheduled action: ${errorMessage}`);
         
-        try {
-          sonnerToast.error('Failed to execute scheduled action', {
-            id: 'schedule-execution',
-            description: errorMessage
-          });
-        } catch (e) {
-          console.error('Failed to show Sonner toast:', e);
-        }
-        
-        try {
-          shadcnToast({
-            title: "Schedule Error",
-            description: "Failed to execute the scheduled action",
-            variant: "destructive",
-          });
-        } catch (e) {
-          console.error('Failed to show Shadcn toast:', e);
-        }
-        
         // Reset the triggered flag after failure (with a shorter timeout)
         setTimeout(() => {
+          logDebug(`Resetting hasTriggered flag after error`, { force: true });
           hasTriggeredRef.current = false;
+          setCountdownState(prev => ({ ...prev, hasTriggered: false }));
         }, 60 * 1000);
       }
     };
 
     // Initial calculation
-    setCountdown(calculateTimeRemaining());
-    
-    // Show startup toast message to confirm the hook is working
-    debugToast('INFO', 'Schedule monitoring started', `Monitoring ${triggerTime} on ${dayOfWeek}`);
-    try {
-      sonnerToast.info(`Schedule monitoring started`, {
-        description: `Monitoring ${triggerTime} on ${dayOfWeek}`,
-        duration: 3000
+    if (!hookInitializedRef.current) {
+      hookInitializedRef.current = true;
+      
+      const initialCountdown = calculateTimeRemaining();
+      setCountdownState({
+        countdown: initialCountdown,
+        lastCalculation: lastCalculationRef.current,
+        triggerState: triggerRef.current,
+        hasTriggered: hasTriggeredRef.current
       });
-    } catch (e) {
-      console.error('Failed to show Sonner toast on startup:', e);
+      
+      // Show startup toast message to confirm the hook is working
+      debugToast('INFO', 'Schedule monitoring started', `Monitoring ${triggerTime} on ${dayOfWeek}`);
+      
+      logDebug(`Initial calculation complete`, { 
+        countdown: initialCountdown,
+        force: true
+      });
     }
     
     // Update more frequently as we get closer to the trigger time
     const interval = setInterval(() => {
       const remaining = calculateTimeRemaining();
-      setCountdown(remaining);
+      
+      setCountdownState({
+        countdown: remaining,
+        lastCalculation: lastCalculationRef.current,
+        triggerState: triggerRef.current,
+        hasTriggered: hasTriggeredRef.current
+      });
       
       // If we're close to triggering, update more frequently
       if (remaining === 'Triggering soon' || remaining === 'Triggering...') {
+        logDebug(`Setting up quick interval for imminent trigger`, { 
+          countdown: remaining,
+          force: true 
+        });
+        
         clearInterval(interval);
         const quickInterval = setInterval(() => {
           const nowState = calculateTimeRemaining();
-          setCountdown(nowState);
+          
+          setCountdownState({
+            countdown: nowState,
+            lastCalculation: lastCalculationRef.current,
+            triggerState: triggerRef.current,
+            hasTriggered: hasTriggeredRef.current
+          });
+          
+          logDebug(`Quick interval update`, { countdown: nowState });
         }, 1000); // Check every second when close to trigger time
         
         // Clean up the quick interval after 2 minutes
         setTimeout(() => {
           clearInterval(quickInterval);
+          logDebug(`Cleared quick interval after timeout`, { force: true });
         }, 120000);
       }
-    }, 10000); // Update every 10 seconds normally (increased frequency from 30s)
+    }, 10000); // Update every 10 seconds normally
     
     return () => clearInterval(interval);
-  }, [triggerTime, dayOfWeek, systemId, countdown]);
+  }, [triggerTime, dayOfWeek, systemId, countdownState.countdown]);
 
-  return countdown;
+  return countdownState;
 };
 
 // This function calculates the countdown without using hooks

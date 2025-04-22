@@ -13,7 +13,15 @@ export const ScheduleStatusIndicator: React.FC<ScheduleStatusIndicatorProps> = (
   dayOfWeek,
   systemId
 }) => {
-  const countdown = useScheduleCountdown(triggerTime, dayOfWeek, systemId);
+  const { countdown, lastCalculation, triggerState, hasTriggered } = useScheduleCountdown(triggerTime, dayOfWeek, systemId);
+  
+  console.log(`ScheduleStatusIndicator for ${triggerTime} on ${dayOfWeek}:`, {
+    countdown,
+    lastCalculation: lastCalculation ? new Date(lastCalculation).toISOString() : null,
+    triggerState,
+    hasTriggered,
+    currentTime: new Date().toISOString()
+  });
   
   // Determine status color and text
   let statusColor = 'bg-blue-100 text-blue-800'; // Default (far from trigger)
@@ -34,11 +42,18 @@ export const ScheduleStatusIndicator: React.FC<ScheduleStatusIndicatorProps> = (
     <div className="flex flex-col space-y-1">
       <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColor}`}>
         {statusText}
+        {hasTriggered && <span className="ml-1">(Executed)</span>}
       </div>
       <div className="text-sm text-gray-500">
         {statusText !== 'Invalid Schedule' ? (
           <span>
-            Next trigger: <span className="font-medium">{dayOfWeek} at {triggerTime}</span> ({countdown})
+            Next trigger: <span className="font-medium">{dayOfWeek} at {triggerTime}</span> 
+            {countdown && <span> ({countdown})</span>}
+            <br />
+            <span className="text-xs text-gray-400">
+              Trigger state: {triggerState ? 'Active' : 'Waiting'} | 
+              Last check: {lastCalculation ? new Date(lastCalculation).toLocaleTimeString() : 'None'}
+            </span>
           </span>
         ) : (
           <span>
