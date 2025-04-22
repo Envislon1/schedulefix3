@@ -1,1 +1,11 @@
+
 project_id = "hzqnccsmejplilhmisgu"
+
+[functions.scheduled-inverter-control]
+verify_jwt = false
+
+[functions.schedule-runner]
+verify_jwt = false
+
+[functions.get-current-time]
+verify_jwt = false
