@@ -4,6 +4,14 @@ import { manuallyTriggerScheduleCheck } from '../utils/scheduleUtils';
 import { toast as shadcnToast } from '@/hooks/use-toast';
 import { toast as sonnerToast } from 'sonner';
 
+// Debug function to make toast visibility obvious in console
+const debugToast = (type: string, title: string, message: string) => {
+  console.log(`=== TOAST NOTIFICATION (${type}) ===`);
+  console.log(`Title: ${title}`);
+  console.log(`Message: ${message}`);
+  console.log('===================================');
+};
+
 // This hook calculates a countdown to a scheduled event
 export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, systemId?: string) => {
   const [countdown, setCountdown] = useState<string>('');
@@ -13,6 +21,8 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
   const triggeringSoonNotifiedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    console.log(`useScheduleCountdown initialized for ${triggerTime} on ${dayOfWeek}${systemId ? ` (System ID: ${systemId})` : ''}`);
+    
     const calculateTimeRemaining = () => {
       const now = new Date();
       lastCalculationRef.current = now.getTime();
@@ -72,15 +82,24 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         triggerRef.current = true;
         console.log(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Exact trigger time reached.`);
         
-        // Use both toast systems for maximum visibility
-        sonnerToast.success(`Schedule Triggered: ${dayOfWeek} at ${triggerTime}`, {
-          description: 'Exact trigger time reached'
-        });
+        // Use both toast systems and debug console
+        debugToast('SUCCESS', 'Schedule Triggered', `Exact trigger time reached for ${dayOfWeek} at ${triggerTime}`);
+        try {
+          sonnerToast.success(`Schedule Triggered: ${dayOfWeek} at ${triggerTime}`, {
+            description: 'Exact trigger time reached'
+          });
+        } catch (e) {
+          console.error('Failed to show Sonner toast:', e);
+        }
         
-        shadcnToast({
-          title: "Schedule Triggered",
-          description: `Exact trigger time reached for ${dayOfWeek} at ${triggerTime}`,
-        });
+        try {
+          shadcnToast({
+            title: "Schedule Triggered",
+            description: `Exact trigger time reached for ${dayOfWeek} at ${triggerTime}`,
+          });
+        } catch (e) {
+          console.error('Failed to show Shadcn toast:', e);
+        }
         
         // Execute auto-trigger if conditions are met and we haven't triggered yet
         if (systemId && !hasTriggeredRef.current) {
@@ -98,14 +117,23 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         if (!triggeringSoonNotifiedRef.current && systemId) {
           triggeringSoonNotifiedRef.current = true;
           
-          sonnerToast.info(`Schedule Triggering Soon: ${dayOfWeek} at ${triggerTime}`, {
-            description: 'Preparing to execute scheduled action'
-          });
+          debugToast('INFO', 'Schedule Triggering Soon', `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`);
+          try {
+            sonnerToast.info(`Schedule Triggering Soon: ${dayOfWeek} at ${triggerTime}`, {
+              description: 'Preparing to execute scheduled action'
+            });
+          } catch (e) {
+            console.error('Failed to show Sonner toast:', e);
+          }
           
-          shadcnToast({
-            title: "Schedule Triggering Soon",
-            description: `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`,
-          });
+          try {
+            shadcnToast({
+              title: "Schedule Triggering Soon",
+              description: `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`,
+            });
+          } catch (e) {
+            console.error('Failed to show Shadcn toast:', e);
+          }
         }
         
         // Execute auto-trigger if conditions are met and we haven't triggered yet
@@ -154,15 +182,24 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
       });
       
       // Show toast notification when triggering - use both toast systems
-      sonnerToast.loading(`Executing scheduled action for ${dayOfWeek} at ${triggerTime}`, {
-        id: 'schedule-execution',
-        duration: 3000
-      });
+      debugToast('LOADING', 'Schedule Triggered', `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`);
+      try {
+        sonnerToast.loading(`Executing scheduled action for ${dayOfWeek} at ${triggerTime}`, {
+          id: 'schedule-execution',
+          duration: 3000
+        });
+      } catch (e) {
+        console.error('Failed to show Sonner toast:', e);
+      }
       
-      shadcnToast({
-        title: "Schedule Triggered",
-        description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
-      });
+      try {
+        shadcnToast({
+          title: "Schedule Triggered",
+          description: `Executing scheduled action for ${dayOfWeek} at ${triggerTime}`,
+        });
+      } catch (e) {
+        console.error('Failed to show Shadcn toast:', e);
+      }
       
       try {
         hasTriggeredRef.current = true; // Mark as triggered to prevent duplicate calls
@@ -178,15 +215,24 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         console.log('Auto-trigger executed successfully:', result);
         
         // Show success toast notification using both systems
-        sonnerToast.success('Schedule executed successfully', {
-          id: 'schedule-execution',
-          description: `The scheduled action for ${dayOfWeek} at ${triggerTime} completed`
-        });
+        debugToast('SUCCESS', 'Schedule Executed', `The scheduled action for ${dayOfWeek} at ${triggerTime} completed`);
+        try {
+          sonnerToast.success('Schedule executed successfully', {
+            id: 'schedule-execution',
+            description: `The scheduled action for ${dayOfWeek} at ${triggerTime} completed`
+          });
+        } catch (e) {
+          console.error('Failed to show Sonner toast:', e);
+        }
         
-        shadcnToast({
-          title: "Schedule Executed",
-          description: "The scheduled action has been completed successfully",
-        });
+        try {
+          shadcnToast({
+            title: "Schedule Executed",
+            description: "The scheduled action has been completed successfully",
+          });
+        } catch (e) {
+          console.error('Failed to show Shadcn toast:', e);
+        }
         
         // Reset the triggered flag after 5 minutes to allow future triggers
         setTimeout(() => {
@@ -196,16 +242,27 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
         console.error('Failed to execute auto-trigger:', error);
         
         // Show error toast notification using both systems
-        sonnerToast.error('Failed to execute scheduled action', {
-          id: 'schedule-execution',
-          description: error instanceof Error ? error.message : 'Unknown error'
-        });
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        debugToast('ERROR', 'Schedule Error', `Failed to execute the scheduled action: ${errorMessage}`);
         
-        shadcnToast({
-          title: "Schedule Error",
-          description: "Failed to execute the scheduled action",
-          variant: "destructive",
-        });
+        try {
+          sonnerToast.error('Failed to execute scheduled action', {
+            id: 'schedule-execution',
+            description: errorMessage
+          });
+        } catch (e) {
+          console.error('Failed to show Sonner toast:', e);
+        }
+        
+        try {
+          shadcnToast({
+            title: "Schedule Error",
+            description: "Failed to execute the scheduled action",
+            variant: "destructive",
+          });
+        } catch (e) {
+          console.error('Failed to show Shadcn toast:', e);
+        }
         
         // Reset the triggered flag after failure (with a shorter timeout)
         setTimeout(() => {
@@ -218,10 +275,15 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
     setCountdown(calculateTimeRemaining());
     
     // Show startup toast message to confirm the hook is working
-    sonnerToast.info(`Schedule monitoring started`, {
-      description: `Monitoring ${triggerTime} on ${dayOfWeek}`,
-      duration: 3000
-    });
+    debugToast('INFO', 'Schedule monitoring started', `Monitoring ${triggerTime} on ${dayOfWeek}`);
+    try {
+      sonnerToast.info(`Schedule monitoring started`, {
+        description: `Monitoring ${triggerTime} on ${dayOfWeek}`,
+        duration: 3000
+      });
+    } catch (e) {
+      console.error('Failed to show Sonner toast on startup:', e);
+    }
     
     // Update more frequently as we get closer to the trigger time
     const interval = setInterval(() => {
