@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from 'react';
 import { manuallyTriggerScheduleCheck } from '../utils/scheduleUtils';
 import { toast as shadcnToast } from '@/hooks/use-toast';
@@ -133,65 +132,38 @@ export const useScheduleCountdown = (triggerTime: string, dayOfWeek: string, sys
       let timeDiff = targetDate.getTime() - now.getTime();
       
       // Detailed logging for debugging
-      logDebug(`Schedule calculation for ${triggerTime} on ${dayOfWeek}:`, {
+      logDebug(`Schedule calculation:`, {
         now: now.toISOString(),
         targetDate: targetDate.toISOString(),
         currentDay,
         targetDay,
         daysUntil,
         diffMs: timeDiff,
-        diffMinutes: Math.floor(timeDiff / (1000 * 60)),
+        diffSeconds: Math.floor(timeDiff / 1000),
         force: true
       });
       
-      // Important: Set trigger state when we're extremely close to or past the trigger time
-      if (timeDiff <= 0) {
-        triggerRef.current = true;
-        logDebug(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Exact trigger time reached.`, { critical: true });
-        
-        // Use both toast systems and debug console
-        debugToast('SUCCESS', 'Schedule Triggered', `Exact trigger time reached for ${dayOfWeek} at ${triggerTime}`);
-        
-        // Execute auto-trigger if conditions are met and we haven't triggered yet
-        if (systemId && !hasTriggeredRef.current) {
-          logDebug(`Auto-triggering execution due to exact time match`, { critical: true });
-          executeAutoTrigger();
+      // MODIFIED: Set trigger state when we're within 60 seconds of the target time
+      if (timeDiff <= 60000 && timeDiff > -60000) { // Within 60 seconds before or after
+        if (!triggerRef.current) {
+          triggerRef.current = true;
+          logDebug(`TRIGGER STATE ACTIVATED - Within 60 second window of ${triggerTime} on ${dayOfWeek}`, { critical: true });
+          
+          // Use both toast systems and debug console
+          debugToast('SUCCESS', 'Schedule Triggered', `Trigger time reached for ${dayOfWeek} at ${triggerTime}`);
+          
+          // Execute auto-trigger if conditions are met and we haven't triggered yet
+          if (systemId && !hasTriggeredRef.current) {
+            logDebug(`Auto-triggering execution within 60 second window`, { critical: true });
+            executeAutoTrigger();
+          }
         }
-        
         return 'Triggering...';
       }
       
-      if (timeDiff < 60000) { // Less than a minute
-        triggerRef.current = true;
-        logDebug(`TRIGGER STATE ACTIVATED for ${triggerTime} on ${dayOfWeek}! Less than a minute away.`, { critical: true });
-        
-        // Show "triggering soon" toast only once - use both toast systems for visibility
-        if (!triggeringSoonNotifiedRef.current && systemId) {
-          triggeringSoonNotifiedRef.current = true;
-          
-          debugToast('INFO', 'Schedule Triggering Soon', `Preparing to execute scheduled action for ${dayOfWeek} at ${triggerTime}`);
-          
-          // Add a small delay before attempting execution to ensure notification is visible
-          setTimeout(() => {
-            // Execute auto-trigger if conditions are met and we haven't triggered yet
-            if (systemId && !hasTriggeredRef.current) {
-              logDebug(`Auto-triggering execution after slight delay from "triggering soon" state`, { critical: true });
-              executeAutoTrigger();
-            }
-          }, 2000);
-        }
-        
-        return 'Triggering soon';
-      }
-      
-      // Reset the triggering soon notification flag when we're not close to triggering
-      if (triggeringSoonNotifiedRef.current && timeDiff > 120000) { // > 2 minutes away
-        logDebug(`Resetting triggering soon notification flag as we're now ${Math.floor(timeDiff / 60000)} minutes away`, { force: true });
-        triggeringSoonNotifiedRef.current = false;
-      }
-      
-      if (triggerRef.current && timeDiff > 120000) { // > 2 minutes away
-        logDebug(`Resetting trigger state as we're now ${Math.floor(timeDiff / 60000)} minutes away`, { force: true });
+      // Reset trigger state if we're outside the 60-second window
+      if (triggerRef.current && (timeDiff > 60000 || timeDiff < -60000)) {
+        logDebug(`Resetting trigger state - Outside 60 second window`, { force: true });
         triggerRef.current = false;
       }
       
