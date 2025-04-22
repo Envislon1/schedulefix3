@@ -121,7 +121,7 @@ export function ScheduledControls({ inverterId }: ScheduledControlsProps) {
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
               <div>
                 <h3 className="text-lg font-semibold">
-                  {schedule.name || `Power ${schedule.state ? 'ON' : 'OFF'} Schedule`}
+                  {`Power ${schedule.state ? 'ON' : 'OFF'} Schedule`}
                 </h3>
                 <p className="text-sm text-gray-400">
                   {schedule.days_of_week.join(', ')} at {schedule.trigger_time}

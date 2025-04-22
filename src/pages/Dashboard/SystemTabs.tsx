@@ -5,7 +5,7 @@ import { PowerConsumptionChart } from "@/components/inverter/PowerConsumptionCha
 import { InverterDataDisplay } from "@/components/inverter/InverterDataDisplay";
 import { DeviceStatusMonitor } from "@/components/inverter/DeviceStatusMonitor";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import ScheduledControls from "@/components/inverter/ScheduledControls";
+import { ScheduledControls } from "@/components/inverter/ScheduledControls";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { InverterSystemParameters } from "./types";
 
