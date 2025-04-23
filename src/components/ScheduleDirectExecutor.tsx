@@ -49,10 +49,19 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
         
       if (!error && data && data.length > 0) {
         const execution = data[0];
+        // Fix: Safely access the success property from details
+        const details = execution.details;
+        let success = false;
+        
+        // Check if details is an object with a success property
+        if (details && typeof details === 'object' && 'success' in details) {
+          success = Boolean(details.success);
+        }
+        
         setLastAction({
           time: new Date(execution.created_at).toLocaleTimeString(),
           action: execution.action,
-          success: execution.details?.success || false
+          success: success
         });
       }
     };
