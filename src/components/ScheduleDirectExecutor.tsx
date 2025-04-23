@@ -132,17 +132,33 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
       // Force execute the schedule with direct execution mode
       const result = await forceExecuteSchedule(scheduleId, systemId, useDirectExecution);
       
+      // Get the power state from the appropriate property
+      let powerState = false;
+      let scheduleInfo = null;
+      
+      // Handle different return types
+      if ('schedule' in result) {
+        // This is from forceExecuteSchedule that returns schedule details
+        scheduleInfo = result.schedule;
+        powerState = scheduleInfo.state;
+      } else if ('data' in result && result.data) {
+        // This is from emergencyFirebaseExecution that doesn't return schedule details
+        // Try to get state information from the data
+        const stateFromData = result.data.state ?? (result.data.message?.includes('ON') ? true : false);
+        powerState = stateFromData;
+      }
+      
       // Update last action for debug mode
       setLastAction({
         time: new Date().toLocaleTimeString(),
-        action: result.schedule.state ? "power_on" : "power_off",
+        action: powerState ? "power_on" : "power_off",
         success: true
       });
       
       // Show success toast
       toast({
         title: "Schedule Executed",
-        description: `Power has been turned ${result.schedule.state ? 'ON' : 'OFF'} successfully.`,
+        description: `Power has been turned ${powerState ? 'ON' : 'OFF'} successfully.`,
       });
       
       // Always show execution details
@@ -153,7 +169,7 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
       });
       
       // Update title to show completion for a few seconds
-      document.title = `✅ Power ${result.schedule.state ? 'ON' : 'OFF'} - ${originalTitle}`;
+      document.title = `✅ Power ${powerState ? 'ON' : 'OFF'} - ${originalTitle}`;
       setTimeout(() => {
         document.title = originalTitle;
       }, 5000);
