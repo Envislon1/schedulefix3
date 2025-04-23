@@ -78,7 +78,7 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
     const checkFirebaseStatus = async () => {
       try {
         // Call directly to the functions to verify Firebase access
-        const result = await supabase.functions.invoke("scheduled-inverter-control", {
+        const response = await supabase.functions.invoke("scheduled-inverter-control", {
           method: "POST",
           body: {
             system_id: systemId,
@@ -88,12 +88,18 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
           }
         });
         
-        setFirebaseStatus(result?.connection_status || "Check completed");
+        // Safely access the connection_status property from the response data
+        let connectionStatus = "Check completed";
+        if (response.data && typeof response.data === 'object') {
+          connectionStatus = response.data.connection_status || connectionStatus;
+        }
+        
+        setFirebaseStatus(connectionStatus);
         
         // Log diagnostic information
         await logScheduleDiagnostics(systemId, "Firebase connection check", {
           timestamp: new Date().toISOString(),
-          result: result
+          result: response
         });
       } catch (err) {
         setFirebaseStatus(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -208,7 +214,7 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
       });
       
       // Try to update the power state directly via the function
-      const result = await supabase.functions.invoke("scheduled-inverter-control", {
+      const response = await supabase.functions.invoke("scheduled-inverter-control", {
         method: "POST",
         body: {
           system_id: systemId,
@@ -219,7 +225,13 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
         }
       });
       
-      if (result && result.success) {
+      // Safely check the success property from the response
+      let wasSuccessful = false;
+      if (response.data && typeof response.data === 'object') {
+        wasSuccessful = !!response.data.success;
+      }
+      
+      if (wasSuccessful) {
         toast({
           title: "Firebase Test Successful",
           description: "Direct power control command succeeded. The inverter should turn ON.",
@@ -235,7 +247,7 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
       // Log the test result
       await logScheduleDiagnostics(systemId, "Manual Firebase test", {
         timestamp: new Date().toISOString(),
-        result: result
+        result: response
       });
     } catch (err) {
       console.error("Firebase test failed:", err);
