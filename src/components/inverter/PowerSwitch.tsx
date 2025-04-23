@@ -26,140 +26,140 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
   const [lastFirebaseUpdate, setLastFirebaseUpdate] = useState<Date | null>(null);
   const [scheduleTriggerAttempts, setScheduleTriggerAttempts] = useState<number>(0);
   const [lastScheduleData, setLastScheduleData] = useState<any>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // Listen for schedule actions on this system with enhanced response
   useEffect(() => {
     if (!systemId) return;
     
     const fetchScheduleActions = async () => {
-      const { data, error } = await supabase
-        .from('scheduled_actions_log')
-        .select('*')
-        .eq('system_id', systemId)
-        .order('created_at', { ascending: false })
-        .limit(1);
-        
-      if (error) {
-        console.error('Error fetching schedule actions:', error);
-        return;
-      }
-      
-      if (data && data.length > 0) {
-        const latestAction = data[0];
-        setLastScheduleAction(`${latestAction.action} at ${new Date(latestAction.created_at).toLocaleTimeString()}`);
-        setLastScheduleData(latestAction);
-        
-        // Extract success status and target power state from details if available
-        let success = false;
-        let targetPowerState = null;
-        
-        if (latestAction.details && typeof latestAction.details === 'object') {
-          if ('success' in latestAction.details) {
-            success = Boolean(latestAction.details.success);
-          }
+      try {
+        const { data, error } = await supabase
+          .from('scheduled_actions_log')
+          .select('*')
+          .eq('system_id', systemId)
+          .order('created_at', { ascending: false })
+          .limit(1);
           
-          // Try multiple paths to find the target power state
-          if ('power_state' in latestAction.details) {
-            targetPowerState = Boolean(latestAction.details.power_state);
-          } else if ('power_changed_to' in latestAction.details) {
-            targetPowerState = latestAction.details.power_changed_to === "ON";
-          } else if ('target_state' in latestAction.details) {
-            targetPowerState = latestAction.details.target_state === "ON";
-          }
+        if (error) {
+          console.error('Error fetching schedule actions:', error);
+          return;
         }
         
-        // Determine if this action is new (hasn't been processed yet)
-        const actionTime = new Date(latestAction.created_at);
-        const now = new Date();
-        const isRecent = (now.getTime() - actionTime.getTime()) < 60000; // Within last minute
-        const isNewAction = !lastFirebaseUpdate || actionTime > lastFirebaseUpdate;
-        
-        // Process power state changes from schedules
-        if ((latestAction.triggered_by === 'schedule' || 
-            latestAction.action === 'schedule_execution_completed' || 
-            latestAction.action === 'power_on' || 
-            latestAction.action === 'power_off') && 
-            isRecent && isNewAction) {
+        if (data && data.length > 0) {
+          const latestAction = data[0];
+          const actionTime = new Date(latestAction.created_at);
+          const now = new Date();
+          const isRecent = (now.getTime() - actionTime.getTime()) < 300000; // Within last 5 minutes
           
-          // Highlight the power switch to show the schedule affected it
-          setIsScheduleTriggered(true);
-          setTimeout(() => setIsScheduleTriggered(false), 5000);
+          // Only show in debug UI if it's recent
+          if (isRecent) {
+            setLastScheduleAction(`${latestAction.action} at ${new Date(latestAction.created_at).toLocaleTimeString()}`);
+            setLastScheduleData(latestAction);
+            setDebugMode(true); // Auto-enable debug mode for recent actions
+          }
           
-          // Determine the target power state
-          const actionBasedPowerState = 
-            latestAction.action === 'power_on' ? true : 
-            latestAction.action === 'power_off' ? false : 
-            targetPowerState;
+          // Extract success status and target power state from details if available
+          let targetPowerState = null;
           
-          // Only update if we have a clear target state
-          if (actionBasedPowerState !== null) {
-            console.log(`Schedule detected, updating power state to ${actionBasedPowerState ? 'ON' : 'OFF'}`);
+          if (latestAction.details && typeof latestAction.details === 'object') {
+            // Try multiple paths to find the target power state
+            if ('power_state' in latestAction.details) {
+              targetPowerState = latestAction.details.power_state === 1;
+            } else if ('power_changed_to' in latestAction.details) {
+              targetPowerState = latestAction.details.power_changed_to === "ON";
+            } else if ('target_state' in latestAction.details) {
+              targetPowerState = latestAction.details.target_state === "ON";
+            }
+          }
+          
+          // Determine if this action is new and should trigger an update
+          const isNewAction = !lastFirebaseUpdate || actionTime > lastFirebaseUpdate;
+          
+          // Process power state changes from schedules - with stricter conditions
+          if ((latestAction.triggered_by === 'schedule' || 
+              latestAction.action === 'schedule_execution_completed' || 
+              latestAction.action === 'power_on' || 
+              latestAction.action === 'power_off') && 
+              isRecent && isNewAction && !isUpdating) {
             
-            try {
-              // Update counter to track attempts
-              setScheduleTriggerAttempts(prev => prev + 1);
+            // Only if we have a definitive target state to apply
+            if (targetPowerState !== null && targetPowerState !== inverterState) {
+              console.log(`Schedule action detected: ${latestAction.action}, target state: ${targetPowerState}`);
               
-              // Force immediate UI update to match the schedule's intent
-              if (actionBasedPowerState !== inverterState) {
-                // Force full sync with Firebase to ensure proper state
-                const updateResult = await setInverterAndLoads(actionBasedPowerState, true);
-                setLastFirebaseUpdate(new Date());
+              // Highlight the power switch to show the schedule affected it
+              setIsScheduleTriggered(true);
+              setTimeout(() => setIsScheduleTriggered(false), 10000); // Longer visual feedback
+              
+              // Prevent duplicate updates
+              setIsUpdating(true);
+              
+              try {
+                // Update counter to track attempts
+                setScheduleTriggerAttempts(prev => prev + 1);
                 
-                console.log(`Schedule-triggered power state update result:`, updateResult);
+                console.log(`Executing direct Firebase power state update to ${targetPowerState ? 'ON' : 'OFF'}`);
+                
+                // IMPORTANT: Use direct Firebase update for maximum reliability
+                const result = await setDevicePowerState(systemId, targetPowerState, true);
+                setLastFirebaseUpdate(new Date());
                 
                 toast({
                   title: "Schedule Applied",
-                  description: `System power set to ${actionBasedPowerState ? 'ON' : 'OFF'} by schedule`,
+                  description: `System power set to ${targetPowerState ? 'ON' : 'OFF'} by schedule`,
                 });
-              }
-              
-              // Log additional information for verification
-              await supabase
-                .from('scheduled_actions_log')
-                .insert({
-                  system_id: systemId,
-                  action: "schedule_verification",
-                  triggered_by: "power_switch_component",
-                  details: { 
-                    verified_state: actionBasedPowerState,
-                    attempt: scheduleTriggerAttempts + 1,
-                    component: "PowerSwitch",
-                    timestamp: new Date().toISOString()
-                  }
-                });
-            } catch (err) {
-              console.error("Failed to apply scheduled power change:", err);
-              toast({
-                title: "Schedule Error",
-                description: `Failed to apply power state: ${err instanceof Error ? err.message : "Unknown error"}`,
-                variant: "destructive",
-              });
-              
-              // Direct Firebase fallback
-              try {
-                console.log("Attempting direct Firebase update as fallback...");
-                await setDevicePowerState(systemId, actionBasedPowerState);
-                setLastFirebaseUpdate(new Date());
+                
+                console.log(`Schedule power update result:`, result);
+                
+                // Log verification
+                await supabase
+                  .from('scheduled_actions_log')
+                  .insert({
+                    system_id: systemId,
+                    action: "schedule_verification_success",
+                    triggered_by: "power_switch_component",
+                    details: { 
+                      verified_state: targetPowerState,
+                      action_id: latestAction.id,
+                      component: "PowerSwitch",
+                      timestamp: new Date().toISOString()
+                    }
+                  });
+              } catch (err) {
+                console.error("Failed to apply scheduled power change:", err);
                 
                 toast({
-                  title: "Schedule Applied (Fallback)",
-                  description: `System power set to ${actionBasedPowerState ? 'ON' : 'OFF'} by schedule (fallback method)`,
+                  title: "Schedule Error",
+                  description: `Failed to apply power state: ${err instanceof Error ? err.message : "Unknown error"}`,
+                  variant: "destructive",
                 });
-              } catch (fallbackErr) {
-                console.error("Fallback method also failed:", fallbackErr);
+                
+                // Log failure
+                await supabase
+                  .from('scheduled_actions_log')
+                  .insert({
+                    system_id: systemId,
+                    action: "schedule_verification_failure",
+                    triggered_by: "power_switch_component",
+                    details: { 
+                      error: err instanceof Error ? err.message : String(err),
+                      action_id: latestAction.id,
+                      timestamp: new Date().toISOString()
+                    }
+                  });
+              } finally {
+                // Allow updates again after a delay
+                setTimeout(() => {
+                  setIsUpdating(false);
+                }, 30000); // 30 second cooldown between schedule-triggered updates
               }
+            } else {
+              console.log(`Schedule action detected but no state change needed. Current: ${inverterState}, Target: ${targetPowerState}`);
             }
-          } else if (success) {
-            toast({
-              title: "Schedule Action Detected",
-              description: `System power was updated by a schedule`,
-            });
           }
-          
-          // Enable debug mode temporarily to show more info
-          setDebugMode(true);
-          setTimeout(() => setDebugMode(false), 10000);
         }
+      } catch (error) {
+        console.error("Error in fetchScheduleActions:", error);
       }
     };
     
@@ -167,10 +167,10 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
     fetchScheduleActions();
     
     // Set up interval to check more frequently for better responsiveness
-    const interval = setInterval(fetchScheduleActions, 3000); // Check every 3 seconds
+    const interval = setInterval(fetchScheduleActions, 5000); // Check every 5 seconds
     
     return () => clearInterval(interval);
-  }, [systemId, setInverterAndLoads, lastFirebaseUpdate, scheduleTriggerAttempts, inverterState]);
+  }, [systemId, inverterState, lastFirebaseUpdate, scheduleTriggerAttempts, isUpdating]);
 
   // Subscribe to device data for real-time updates with improved responsiveness
   useEffect(() => {
@@ -189,6 +189,17 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
   }, [systemId]);
 
   const handleToggle = async (checked: boolean) => {
+    if (isUpdating) {
+      toast({
+        title: "Please wait",
+        description: "Another update is in progress",
+        variant: "default",
+      });
+      return;
+    }
+    
+    setIsUpdating(true);
+    
     try {
       // Force the update with priority flag
       await setInverterAndLoads(checked, true);
@@ -205,6 +216,8 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
         description: error.message,
         variant: "destructive",
       });
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -217,7 +230,7 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
         <div className="flex items-center space-x-2">
           <Power className={`h-5 w-5 ${inverterState ? "text-orange-500" : "text-gray-500"}`} />
           <Label htmlFor={`power-switch-${inverterId}`} className="text-white">
-            {inverterState ? "System On" : "System Off"}
+            {inverterState ? "System On" : "System Off"} {isUpdating && "(Updating...)"}
           </Label>
         </div>
         {lastScheduleAction && (
@@ -240,6 +253,7 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
         id={`power-switch-${inverterId}`}
         checked={inverterState}
         onCheckedChange={handleToggle}
+        disabled={isUpdating}
         className={`${isScheduleTriggered ? 'ring-2 ring-orange-500' : ''} data-[state=checked]:bg-orange-500`}
       />
     </div>

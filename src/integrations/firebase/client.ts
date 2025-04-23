@@ -92,13 +92,11 @@ export const setDevicePowerState = async (deviceId: string, state: boolean, isPr
     // Implement retry logic for Firebase updates
     let success = false;
     let attempts = 0;
-    const maxAttempts = isPriority ? 5 : 3; // More attempts for priority updates
+    const maxAttempts = isPriority ? 3 : 2; // Reduced max attempts to avoid excessive retries
     
     while (!success && attempts < maxAttempts) {
       try {
         await set(deviceRef, updateData);
-        success = true;
-        console.log(`Successfully updated Firebase power state on attempt ${attempts + 1}`);
         
         // Verify the update actually worked
         const verifySnapshot = await get(deviceRef);
@@ -109,18 +107,14 @@ export const setDevicePowerState = async (deviceId: string, state: boolean, isPr
           throw new Error("Verification failed");
         }
         
-        if (!verifyData.scheduledPowerChange || verifyData.scheduledPowerChange.state !== (state ? 1 : 0)) {
-          console.error(`Verification failed: scheduledPowerChange state is missing or incorrect`);
-          throw new Error("scheduledPowerChange verification failed");
-        }
-        
-        console.log(`Verification successful: power=${verifyData.power}, scheduledPowerChange=${JSON.stringify(verifyData.scheduledPowerChange)}`);
+        success = true;
+        console.log(`Successfully updated Firebase power state on attempt ${attempts + 1}`);
       } catch (error) {
         attempts++;
         console.error(`Firebase power update attempt ${attempts} failed:`, error);
         if (attempts >= maxAttempts) throw error;
-        // Wait longer before retrying for exponential backoff
-        const waitTime = Math.pow(2, attempts) * 1000; // 2s, 4s, 8s...
+        // Wait before retrying - shorter wait time
+        const waitTime = 1000 * attempts; // 1s, 2s
         console.log(`Waiting ${waitTime}ms before retry attempt ${attempts + 1}`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
@@ -139,7 +133,8 @@ export const setDevicePowerState = async (deviceId: string, state: boolean, isPr
             timestamp: new Date().toISOString(),
             firebase_data: updateData,
             is_priority: isPriority,
-            verification_success: success
+            verification_success: success,
+            attempts
           }
         });
     } catch (error) {
