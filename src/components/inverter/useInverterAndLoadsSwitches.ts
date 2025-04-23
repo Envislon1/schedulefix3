@@ -1,3 +1,4 @@
+
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { subscribeToDeviceData, setAllDeviceStates } from "@/integrations/firebase/client";
@@ -136,7 +137,7 @@ export function useInverterAndLoadsSwitches(inverterId: string) {
   }, [systemId]);
 
   // Send all states to Firebase and update Supabase
-  const setAllStates = async (next: { inverter: boolean, loads: LoadSwitch[] }) => {
+  const setAllStates = async (next: { inverter: boolean, loads: LoadSwitch[] }, isPriority: boolean = false) => {
     if (!systemId) return false;
 
     try {
@@ -150,7 +151,7 @@ export function useInverterAndLoadsSwitches(inverterId: string) {
       }
 
       // 2. Set all in one go for Firebase
-      await setAllDeviceStates(systemId, firebaseUpdate);
+      await setAllDeviceStates(systemId, firebaseUpdate, isPriority);
 
       // 3. Update Supabase for each changed load (by id)
       for (const load of next.loads) {
@@ -168,10 +169,10 @@ export function useInverterAndLoadsSwitches(inverterId: string) {
   };
 
   // Handlers
-  const setInverterAndLoads = async (newInverterState: boolean) => {
+  const setInverterAndLoads = async (newInverterState: boolean, isPriority: boolean = false) => {
     // Send inverter update with current loads states
     const updates = { inverter: newInverterState, loads };
-    const ok = await setAllStates(updates);
+    const ok = await setAllStates(updates, isPriority);
     if (ok) setInverterState(newInverterState);
     return ok;
   };
