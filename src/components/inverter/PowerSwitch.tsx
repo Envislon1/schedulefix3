@@ -23,6 +23,7 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
   const [lastScheduleAction, setLastScheduleAction] = useState<string | null>(null);
   const [debugMode, setDebugMode] = useState(false);
   const [isScheduleTriggered, setIsScheduleTriggered] = useState(false);
+  const [lastFirebaseUpdate, setLastFirebaseUpdate] = useState<Date | null>(null);
 
   // Listen for schedule actions on this system
   useEffect(() => {
@@ -53,16 +54,51 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
           success = Boolean(latestAction.details.success);
         }
         
+        // Check if this is a new schedule action we haven't processed yet
+        const actionTime = new Date(latestAction.created_at);
+        const isNewAction = !lastFirebaseUpdate || actionTime > lastFirebaseUpdate;
+        
         // Show a toast for schedule actions
-        if (latestAction.triggered_by === 'schedule' || latestAction.action === 'schedule_execution_completed') {
+        if ((latestAction.triggered_by === 'schedule' || 
+            latestAction.action === 'schedule_execution_completed') && 
+            isNewAction) {
+          
           // Highlight the power switch to show the schedule affected it
           setIsScheduleTriggered(true);
           setTimeout(() => setIsScheduleTriggered(false), 5000);
           
-          toast({
-            title: success ? "Schedule Executed Successfully" : "Schedule Action Detected",
-            description: `System power was set to ${latestAction.action === 'power_on' ? 'ON' : 'OFF'} by a schedule`,
-          });
+          // Update the Firebase state directly for schedules if needed
+          if (latestAction.action === 'power_on' || latestAction.action === 'power_off') {
+            const newPowerState = latestAction.action === 'power_on';
+            
+            // Only update if the current state doesn't match the scheduled state
+            if (inverterState !== newPowerState) {
+              console.log(`Schedule detected, directly updating power state to ${newPowerState ? 'ON' : 'OFF'}`);
+              
+              try {
+                // Update local state to match what the schedule intended
+                await setInverterAndLoads(newPowerState);
+                setLastFirebaseUpdate(new Date());
+                
+                toast({
+                  title: "Schedule Applied",
+                  description: `System power set to ${newPowerState ? 'ON' : 'OFF'} by schedule`,
+                });
+              } catch (err) {
+                console.error("Failed to apply scheduled power change:", err);
+                toast({
+                  title: "Schedule Error",
+                  description: `Failed to apply power state: ${err instanceof Error ? err.message : "Unknown error"}`,
+                  variant: "destructive",
+                });
+              }
+            }
+          } else {
+            toast({
+              title: success ? "Schedule Executed Successfully" : "Schedule Action Detected",
+              description: `System power was set to ${latestAction.action === 'power_on' ? 'ON' : 'OFF'} by a schedule`,
+            });
+          }
           
           // Enable debug mode temporarily to show more info
           setDebugMode(true);
@@ -74,15 +110,33 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
     // Initial fetch
     fetchScheduleActions();
     
-    // Set up interval to check every 10 seconds (more frequent for better responsiveness)
-    const interval = setInterval(fetchScheduleActions, 10000);
+    // Set up interval to check every 5 seconds (more frequent for better responsiveness)
+    const interval = setInterval(fetchScheduleActions, 5000);
     
     return () => clearInterval(interval);
+  }, [systemId, inverterState, setInverterAndLoads, lastFirebaseUpdate]);
+
+  // Subscribe to device data for real-time updates
+  useEffect(() => {
+    if (!systemId) return;
+    
+    const unsubscribe = subscribeToDeviceData(systemId, (data) => {
+      console.log(`Received Firebase data for ${systemId}:`, data);
+      
+      // Update the lastFirebaseUpdate when we get data from Firebase
+      if (data) {
+        setLastFirebaseUpdate(new Date());
+      }
+    });
+    
+    return () => unsubscribe();
   }, [systemId]);
 
   const handleToggle = async (checked: boolean) => {
     try {
       await setInverterAndLoads(checked);
+      setLastFirebaseUpdate(new Date());
+      
       toast({
         title: checked ? "Inverter turned ON" : "Inverter turned OFF",
         description: `System ${inverterId} power state changed (all states sent)`,
@@ -112,6 +166,11 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
         {lastScheduleAction && (
           <div className="text-xs text-gray-400 mt-1">
             Last automated action: {lastScheduleAction}
+          </div>
+        )}
+        {lastFirebaseUpdate && (
+          <div className="text-xs text-gray-400">
+            Last sync: {lastFirebaseUpdate.toLocaleTimeString()}
           </div>
         )}
       </div>

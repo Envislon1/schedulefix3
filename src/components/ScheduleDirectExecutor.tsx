@@ -1,11 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { forceExecuteSchedule, manuallyTriggerScheduleCheck } from '@/utils/scheduleUtils';
+import { forceExecuteSchedule, manuallyTriggerScheduleCheck, logScheduleDiagnostics } from '@/utils/scheduleUtils';
 import { toast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2, Bell, Bug, Info } from 'lucide-react';
+import { Loader2, Bell, Bug, Info, AlertTriangle } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
 interface ScheduleDirectExecutorProps {
@@ -17,6 +17,7 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
   const [executingScheduleId, setExecutingScheduleId] = useState<string | null>(null);
   const [debugMode, setDebugMode] = useState(false);
   const [lastAction, setLastAction] = useState<{time: string, action: string, success: boolean} | null>(null);
+  const [firebaseStatus, setFirebaseStatus] = useState<string | null>(null);
   
   // Fetch all active schedules for this system
   const { data: schedules, isLoading, error, refetch } = useQuery({
@@ -49,7 +50,7 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
         
       if (!error && data && data.length > 0) {
         const execution = data[0];
-        // Fix: Safely access the success property from details
+        // Safely access the success property from details
         const details = execution.details;
         let success = false;
         
@@ -63,6 +64,40 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
           action: execution.action,
           success: success
         });
+        
+        // If this is a recent execution (within last minute), check Firebase status
+        const executionTime = new Date(execution.created_at);
+        const now = new Date();
+        if ((now.getTime() - executionTime.getTime()) < 60000) { // Within last minute
+          checkFirebaseStatus();
+        }
+      }
+    };
+    
+    // Check Firebase connection 
+    const checkFirebaseStatus = async () => {
+      try {
+        // Call directly to the functions to verify Firebase access
+        const result = await supabase.functions.invoke("scheduled-inverter-control", {
+          method: "POST",
+          body: {
+            system_id: systemId,
+            test_mode: true,
+            manual_execution: false,
+            diagnostic_check: true
+          }
+        });
+        
+        setFirebaseStatus(result?.connection_status || "Check completed");
+        
+        // Log diagnostic information
+        await logScheduleDiagnostics(systemId, "Firebase connection check", {
+          timestamp: new Date().toISOString(),
+          result: result
+        });
+      } catch (err) {
+        setFirebaseStatus(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+        console.error("Firebase status check failed:", err);
       }
     };
     
@@ -164,6 +199,54 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
     }
   };
   
+  // Function to run a direct Firebase test
+  const runFirebaseTest = async () => {
+    try {
+      toast({
+        title: "Testing Firebase Connection",
+        description: "Sending a direct test command...",
+      });
+      
+      // Try to update the power state directly via the function
+      const result = await supabase.functions.invoke("scheduled-inverter-control", {
+        method: "POST",
+        body: {
+          system_id: systemId,
+          state: true, // Try to turn it ON
+          user_email: "debug-test@firebase.check",
+          manual_execution: true,
+          test_mode: false
+        }
+      });
+      
+      if (result && result.success) {
+        toast({
+          title: "Firebase Test Successful",
+          description: "Direct power control command succeeded. The inverter should turn ON.",
+        });
+      } else {
+        toast({
+          title: "Firebase Test Failed",
+          description: "The command was sent but may have failed on the server side.",
+          variant: "destructive",
+        });
+      }
+      
+      // Log the test result
+      await logScheduleDiagnostics(systemId, "Manual Firebase test", {
+        timestamp: new Date().toISOString(),
+        result: result
+      });
+    } catch (err) {
+      console.error("Firebase test failed:", err);
+      toast({
+        title: "Firebase Test Failed",
+        description: err instanceof Error ? err.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+  
   if (isLoading) {
     return <div className="p-4 text-center">Loading schedules...</div>;
   }
@@ -217,6 +300,22 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
               {lastAction.success ? ' (Success)' : ' (Failed)'}
             </div>
           )}
+          
+          {firebaseStatus && (
+            <div className="text-xs p-2 rounded border border-blue-500/30 bg-blue-900/10">
+              Firebase connection status: {firebaseStatus}
+            </div>
+          )}
+          
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={runFirebaseTest}
+            className="border-orange-500/40 text-orange-500 hover:bg-orange-500/20"
+          >
+            <AlertTriangle className="mr-2 h-4 w-4" />
+            Test Firebase Connection
+          </Button>
         </div>
       )}
       

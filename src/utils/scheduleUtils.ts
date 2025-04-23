@@ -66,6 +66,9 @@ export async function forceExecuteSchedule(scheduleId: string, systemId: string)
     if (scheduleError) throw scheduleError;
     if (!schedule) throw new Error(`Schedule with ID ${scheduleId} not found`);
     
+    // Log start of execution
+    console.log(`Executing schedule ${scheduleId} for system ${systemId} - setting power to ${schedule.state ? 'ON' : 'OFF'}`);
+    
     // Execute the schedule by calling the scheduled-inverter-control function directly
     const { data, error } = await supabase.functions.invoke("scheduled-inverter-control", {
       method: "POST",
@@ -80,6 +83,26 @@ export async function forceExecuteSchedule(scheduleId: string, systemId: string)
     });
 
     if (error) throw error;
+    
+    // Double-check by logging the execution to the action log
+    try {
+      await supabase
+        .from('scheduled_actions_log')
+        .insert({
+          system_id: systemId,
+          action: "execute_manual_check",
+          triggered_by: "manual_execution",
+          details: { 
+            schedule_id: scheduleId,
+            power_state: schedule.state,
+            result: data,
+            client_time: new Date().toISOString()
+          }
+        });
+    } catch (logError) {
+      console.error("Failed to log schedule execution:", logError);
+    }
+    
     return { success: true, data, schedule };
   } catch (error) {
     console.error("Error forcing schedule execution:", error);
