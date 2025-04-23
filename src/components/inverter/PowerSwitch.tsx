@@ -24,6 +24,7 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
   const [debugMode, setDebugMode] = useState(false);
   const [isScheduleTriggered, setIsScheduleTriggered] = useState(false);
   const [lastFirebaseUpdate, setLastFirebaseUpdate] = useState<Date | null>(null);
+  const [scheduleTriggerAttempts, setScheduleTriggerAttempts] = useState<number>(0);
 
   // Listen for schedule actions on this system
   useEffect(() => {
@@ -71,26 +72,58 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
           if (latestAction.action === 'power_on' || latestAction.action === 'power_off') {
             const newPowerState = latestAction.action === 'power_on';
             
-            // Only update if the current state doesn't match the scheduled state
-            if (inverterState !== newPowerState) {
-              console.log(`Schedule detected, directly updating power state to ${newPowerState ? 'ON' : 'OFF'}`);
+            // Force update regardless of current state to ensure schedule is applied
+            console.log(`Schedule detected, forcing update of power state to ${newPowerState ? 'ON' : 'OFF'}`);
+            
+            try {
+              // Update local state to match what the schedule intended
+              setScheduleTriggerAttempts(prev => prev + 1);
               
+              // Apply update directly to Firebase with retry mechanism
+              const updateResult = await setInverterAndLoads(newPowerState, true);
+              setLastFirebaseUpdate(new Date());
+              
+              console.log(`Direct Firebase update result:`, updateResult);
+              
+              toast({
+                title: "Schedule Applied",
+                description: `System power set to ${newPowerState ? 'ON' : 'OFF'} by schedule`,
+              });
+              
+              // Log additional information for verification
+              await supabase
+                .from('scheduled_actions_log')
+                .insert({
+                  system_id: systemId,
+                  action: "schedule_verification",
+                  triggered_by: "ui_component",
+                  details: { 
+                    verified_state: newPowerState,
+                    attempt: scheduleTriggerAttempts + 1,
+                    component: "PowerSwitch",
+                    timestamp: new Date().toISOString()
+                  }
+                });
+            } catch (err) {
+              console.error("Failed to apply scheduled power change:", err);
+              toast({
+                title: "Schedule Error",
+                description: `Failed to apply power state: ${err instanceof Error ? err.message : "Unknown error"}`,
+                variant: "destructive",
+              });
+              
+              // Try direct Firebase update as backup
               try {
-                // Update local state to match what the schedule intended
-                await setInverterAndLoads(newPowerState);
+                console.log("Attempting direct Firebase update as fallback...");
+                await setDevicePowerState(systemId, newPowerState);
                 setLastFirebaseUpdate(new Date());
                 
                 toast({
-                  title: "Schedule Applied",
-                  description: `System power set to ${newPowerState ? 'ON' : 'OFF'} by schedule`,
+                  title: "Schedule Applied (Fallback)",
+                  description: `System power set to ${newPowerState ? 'ON' : 'OFF'} by schedule (fallback method)`,
                 });
-              } catch (err) {
-                console.error("Failed to apply scheduled power change:", err);
-                toast({
-                  title: "Schedule Error",
-                  description: `Failed to apply power state: ${err instanceof Error ? err.message : "Unknown error"}`,
-                  variant: "destructive",
-                });
+              } catch (fallbackErr) {
+                console.error("Fallback method also failed:", fallbackErr);
               }
             }
           } else {
@@ -114,7 +147,7 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
     const interval = setInterval(fetchScheduleActions, 5000);
     
     return () => clearInterval(interval);
-  }, [systemId, inverterState, setInverterAndLoads, lastFirebaseUpdate]);
+  }, [systemId, setInverterAndLoads, lastFirebaseUpdate, scheduleTriggerAttempts]);
 
   // Subscribe to device data for real-time updates
   useEffect(() => {
@@ -134,7 +167,8 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
 
   const handleToggle = async (checked: boolean) => {
     try {
-      await setInverterAndLoads(checked);
+      // Force the update with priority flag
+      await setInverterAndLoads(checked, true);
       setLastFirebaseUpdate(new Date());
       
       toast({
@@ -171,6 +205,11 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
         {lastFirebaseUpdate && (
           <div className="text-xs text-gray-400">
             Last sync: {lastFirebaseUpdate.toLocaleTimeString()}
+          </div>
+        )}
+        {scheduleTriggerAttempts > 0 && (
+          <div className="text-xs text-orange-400">
+            Schedule triggers: {scheduleTriggerAttempts}
           </div>
         )}
       </div>

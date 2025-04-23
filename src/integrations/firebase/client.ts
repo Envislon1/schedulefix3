@@ -1,4 +1,3 @@
-
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue, get } from 'firebase/database';
 import { supabase } from '@/integrations/supabase/client';
@@ -55,9 +54,9 @@ export const subscribeToDeviceData = (deviceId: string, callback: (data: any) =>
   });
 };
 
-export const setDevicePowerState = async (deviceId: string, state: boolean) => {
+export const setDevicePowerState = async (deviceId: string, state: boolean, isPriority: boolean = false) => {
   try {
-    console.log(`Setting device ${deviceId} power state to ${state ? "ON" : "OFF"}`);
+    console.log(`Setting device ${deviceId} power state to ${state ? "ON" : "OFF"} ${isPriority ? "(PRIORITY)" : ""}`);
     
     if (!deviceId) {
       throw new Error("Invalid deviceId provided");
@@ -78,7 +77,14 @@ export const setDevicePowerState = async (deviceId: string, state: boolean) => {
       ...currentData,
       power: state ? 1 : 0,
       lastUserPower: userEmail,
-      lastUpdate: new Date().toISOString()
+      lastUpdate: new Date().toISOString(),
+      // Add scheduledPowerChange data, critical for updating via schedules
+      scheduledPowerChange: {
+        timestamp: new Date().toISOString(),
+        schedule_id: isPriority ? "ui-priority-update" : "manual",
+        triggered_by: isPriority ? "schedule-system-via-ui" : userEmail,
+        state: state ? 1 : 0
+      }
     };
     
     console.log(`Updating Firebase with data:`, updateData);
@@ -86,19 +92,37 @@ export const setDevicePowerState = async (deviceId: string, state: boolean) => {
     // Implement retry logic for Firebase updates
     let success = false;
     let attempts = 0;
-    const maxAttempts = 3;
+    const maxAttempts = isPriority ? 5 : 3; // More attempts for priority updates
     
     while (!success && attempts < maxAttempts) {
       try {
         await set(deviceRef, updateData);
         success = true;
         console.log(`Successfully updated Firebase power state on attempt ${attempts + 1}`);
+        
+        // Verify the update actually worked
+        const verifySnapshot = await get(deviceRef);
+        const verifyData = verifySnapshot.val() || {};
+        
+        if (verifyData.power !== (state ? 1 : 0)) {
+          console.error(`Verification failed: power state is ${verifyData.power} instead of ${state ? 1 : 0}`);
+          throw new Error("Verification failed");
+        }
+        
+        if (!verifyData.scheduledPowerChange || verifyData.scheduledPowerChange.state !== (state ? 1 : 0)) {
+          console.error(`Verification failed: scheduledPowerChange state is missing or incorrect`);
+          throw new Error("scheduledPowerChange verification failed");
+        }
+        
+        console.log(`Verification successful: power=${verifyData.power}, scheduledPowerChange=${JSON.stringify(verifyData.scheduledPowerChange)}`);
       } catch (error) {
         attempts++;
         console.error(`Firebase power update attempt ${attempts} failed:`, error);
         if (attempts >= maxAttempts) throw error;
-        // Wait before retrying
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Wait longer before retrying for exponential backoff
+        const waitTime = Math.pow(2, attempts) * 1000; // 2s, 4s, 8s...
+        console.log(`Waiting ${waitTime}ms before retry attempt ${attempts + 1}`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
     
@@ -109,11 +133,13 @@ export const setDevicePowerState = async (deviceId: string, state: boolean) => {
         .insert({
           system_id: deviceId,
           action: state ? "power_on" : "power_off",
-          triggered_by: "manual_ui",
+          triggered_by: isPriority ? "schedule_via_ui" : "manual_ui",
           details: { 
             user: userEmail, 
             timestamp: new Date().toISOString(),
-            firebase_data: updateData
+            firebase_data: updateData,
+            is_priority: isPriority,
+            verification_success: success
           }
         });
     } catch (error) {
@@ -121,7 +147,12 @@ export const setDevicePowerState = async (deviceId: string, state: boolean) => {
       // Continue even if logging fails
     }
     
-    return true;
+    return {
+      success: true,
+      attempts,
+      final_attempt_success: success,
+      timestamp: new Date().toISOString()
+    };
   } catch (error) {
     console.error('Error setting device power state:', error);
     throw error;
@@ -172,13 +203,13 @@ export const setDeviceLoadState = async (deviceId: string, loadNumber: number, s
   }
 };
 
-export const setAllDeviceStates = async (deviceId: string, updatePayload: any) => {
+export const setAllDeviceStates = async (deviceId: string, updatePayload: any, isPriority: boolean = false) => {
   try {
     if (!deviceId) {
       throw new Error("Invalid deviceId provided");
     }
     
-    console.log(`Setting all states for device ${deviceId}:`, updatePayload);
+    console.log(`Setting all states for device ${deviceId}${isPriority ? ' (PRIORITY)' : ''}:`, updatePayload);
     const deviceRef = ref(firebaseDb, `/_${deviceId}`);
     
     // Get current data to preserve fields not in the update
@@ -194,12 +225,71 @@ export const setAllDeviceStates = async (deviceId: string, updatePayload: any) =
       ...updatePayload,
       lastUserPower: userEmail,
       lastUpdate: new Date().toISOString(),
+      // Always include scheduledPowerChange when setting all device states
+      scheduledPowerChange: {
+        timestamp: new Date().toISOString(),
+        schedule_id: isPriority ? "ui-priority-update" : "manual-update",
+        triggered_by: isPriority ? "schedule-system-via-ui" : userEmail,
+        state: ('power' in updatePayload) ? updatePayload.power : (currentData.power || 0)
+      }
     };
     
     console.log(`Final data to be sent to Firebase:`, finalData);
-    await set(deviceRef, finalData);
     
-    return true;
+    // Enhanced retry logic
+    let success = false;
+    let attempts = 0;
+    const maxAttempts = isPriority ? 5 : 3;
+    
+    while (!success && attempts < maxAttempts) {
+      try {
+        await set(deviceRef, finalData);
+        success = true;
+        
+        // Verify update
+        const verifySnapshot = await get(deviceRef);
+        const verifyData = verifySnapshot.val();
+        
+        if (!verifyData || 
+            ('power' in updatePayload && verifyData.power !== updatePayload.power) ||
+            !verifyData.scheduledPowerChange) {
+          throw new Error("Verification failed");
+        }
+        
+        console.log(`All device states updated successfully on attempt ${attempts + 1}`);
+      } catch (error) {
+        attempts++;
+        console.error(`Firebase update attempt ${attempts} failed:`, error);
+        if (attempts >= maxAttempts) throw error;
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempts) * 1000));
+      }
+    }
+    
+    // Log to Supabase
+    try {
+      await supabase
+        .from('scheduled_actions_log')
+        .insert({
+          system_id: deviceId,
+          action: "update_all_states",
+          triggered_by: isPriority ? "schedule_via_ui" : "manual_ui",
+          details: { 
+            user: userEmail, 
+            timestamp: new Date().toISOString(),
+            states_updated: Object.keys(updatePayload),
+            is_priority: isPriority,
+            verification_success: success
+          }
+        });
+    } catch (error) {
+      console.error('Error logging all states update to Supabase:', error);
+    }
+    
+    return {
+      success: true,
+      attempts,
+      final_attempt_success: success,
+    };
   } catch (error) {
     console.error('Error updating all device states:', error);
     throw error;
