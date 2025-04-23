@@ -17,9 +17,10 @@ interface ScheduledControlParams {
   user_email?: string;
   schedule_id?: string;
   trigger_time?: string;
-  test_mode?: boolean; // Added for debugging
-  manual_execution?: boolean; // Flag for direct manual execution
-  diagnostic_check?: boolean; // Added to support connection checks
+  test_mode?: boolean; 
+  manual_execution?: boolean; 
+  diagnostic_check?: boolean;
+  direct_execution?: boolean; // Added to support more aggressive triggering
 }
 
 serve(async (req) => {
@@ -45,14 +46,17 @@ serve(async (req) => {
     const database = getDatabase(app);
     
     // Get the request body
-    const { system_id, state, user_email, schedule_id, trigger_time, test_mode, manual_execution, diagnostic_check } = await req.json() as ScheduledControlParams;
+    const { 
+      system_id, state, user_email, schedule_id, trigger_time, 
+      test_mode, manual_execution, diagnostic_check, direct_execution 
+    } = await req.json() as ScheduledControlParams;
     
     const now = new Date();
     const executionTime = now.toISOString();
     
     console.log(`[DEBUG] Received request to set system ${system_id} power state to ${state ? "ON" : "OFF"} from ${user_email || "unknown"}`);
     console.log(`[DEBUG] Schedule details: ID=${schedule_id || "manual"}, Trigger time=${trigger_time || "manual"}, Current time=${executionTime}`);
-    console.log(`[DEBUG] Execution type: ${manual_execution ? "Manual execution" : "Scheduled"}, Test mode: ${test_mode ? "YES" : "NO"}`);
+    console.log(`[DEBUG] Execution type: ${direct_execution ? "Direct execution" : manual_execution ? "Manual execution" : "Scheduled"}, Test mode: ${test_mode ? "YES" : "NO"}`);
 
     // If this is a diagnostic check only, just verify Firebase connection
     if (diagnostic_check) {
@@ -99,6 +103,24 @@ serve(async (req) => {
     console.log(`[DEBUG] Using Firebase path: ${firebasePath}`);
     const systemRef = ref(database, firebasePath);
     
+    // Log this to Supabase first to inform the client we're processing
+    await supabase
+      .from('scheduled_actions_log')
+      .insert({
+        system_id: system_id,
+        action: "processing_power_change",
+        triggered_by: schedule_id ? "schedule" : (manual_execution ? "manual_execution" : "manual_api"),
+        details: { 
+          source: schedule_id ? "scheduler" : (manual_execution ? "manual_execution" : "manual_api"),
+          schedule_id: schedule_id || null,
+          trigger_time: trigger_time || null, 
+          email: user_email || "system",
+          timestamp: executionTime,
+          target_state: state ? "ON" : "OFF",
+          direct_execution: direct_execution || false
+        }
+      });
+    
     // First get current data to preserve existing values
     try {
       console.log(`[DEBUG] Fetching current state from Firebase for system ${system_id}`);
@@ -114,7 +136,6 @@ serve(async (req) => {
       console.log(`[DEBUG] Current power state: ${currentData.power || 0}`);
       
       // The data to update in Firebase, preserving other values
-      // IMPORTANT FIX: Ensure the scheduledPowerChange object is properly formatted and included
       const updateData = {
         ...currentData,
         power: state ? 1 : 0,
@@ -136,7 +157,7 @@ serve(async (req) => {
         // Update the Firebase database with retry logic
         let success = false;
         let attempts = 0;
-        const maxAttempts = 5; // Increased from 3 to 5
+        const maxAttempts = direct_execution ? 10 : 5; // Increased retries for direct execution
         
         while (!success && attempts < maxAttempts) {
           try {
@@ -176,7 +197,7 @@ serve(async (req) => {
         if (!powerStateUpdated || !schedulePowerChangeUpdated) {
           console.error(`[ERROR] Firebase update verification failed: power state or scheduledPowerChange did not update correctly`);
           
-          // Try one more time with direct power update
+          // Try one more time with direct power update - AGGRESSIVE MODE
           const emergencyUpdate = {
             power: state ? 1 : 0,
             lastUpdate: new Date().toISOString(),
@@ -187,31 +208,41 @@ serve(async (req) => {
               triggered_by: "emergency-retry-system",
               state: state ? 1 : 0
             },
-            retryReason: "verification_failed"
+            retryReason: "verification_failed",
+            emergency: true
           };
           
           console.log(`[DEBUG] EMERGENCY RETRY: Setting power state directly:`, JSON.stringify(emergencyUpdate));
-          await set(systemRef, { ...verifyData, ...emergencyUpdate });
           
-          // Verify again
-          const finalVerifySnapshot = await get(systemRef);
-          const finalVerifyData = finalVerifySnapshot.val() || {};
-          const finalPowerState = finalVerifyData.power === (state ? 1 : 0);
-          const finalScheduleUpdateState = finalVerifyData.scheduledPowerChange && 
-                                         finalVerifyData.scheduledPowerChange.state === (state ? 1 : 0);
-          
-          console.log(`[DEBUG] Final verification: expected power=${state ? 1 : 0}, actual=${finalVerifyData.power}, match=${finalPowerState}`);
-          console.log(`[DEBUG] Final scheduledPowerChange verification: updated=${finalScheduleUpdateState}, value=`, 
-                     JSON.stringify(finalVerifyData.scheduledPowerChange));
-          
-          if (!finalPowerState || !finalScheduleUpdateState) {
-            throw new Error("Firebase power state and scheduledPowerChange verification failed after emergency retry");
-          } else {
-            console.log("[DEBUG] Emergency retry SUCCESS - power state and scheduledPowerChange set correctly");
+          // Try multiple approaches in emergency mode
+          try {
+            // Approach 1: Set just the critical fields
+            await set(ref(database, `/_${system_id}/power`), state ? 1 : 0);
+            await set(ref(database, `/_${system_id}/lastUpdate`), new Date().toISOString());
+            
+            // Approach 2: Set the whole object again
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await set(systemRef, { ...verifyData, ...emergencyUpdate });
+            
+            // Verify again
+            const finalVerifySnapshot = await get(systemRef);
+            const finalVerifyData = finalVerifySnapshot.val() || {};
+            const finalPowerState = finalVerifyData.power === (state ? 1 : 0);
+            
+            console.log(`[DEBUG] Final verification: expected power=${state ? 1 : 0}, actual=${finalVerifyData.power}, match=${finalPowerState}`);
+            
+            if (!finalPowerState) {
+              throw new Error("Firebase power state verification failed after emergency retry");
+            } else {
+              console.log("[DEBUG] Emergency retry SUCCESS - power state set correctly");
+            }
+          } catch (emergencyError) {
+            console.error("[ERROR] Emergency retry failed:", emergencyError);
+            throw new Error(`Emergency retry failed: ${emergencyError.message}`);
           }
         }
         
-        // Log this action to Supabase for auditing
+        // Log this action to Supabase for auditing - CRITICAL: This tells clients the action succeeded
         await supabase
           .from('scheduled_actions_log')
           .insert({
@@ -232,17 +263,17 @@ serve(async (req) => {
                 verified: true,
                 expected: state ? 1 : 0,
                 actual: verifyData.power,
+                attempts: attempts + 1,
                 scheduledPowerChange: verifyData.scheduledPowerChange
               }
             }
           });
         
-        // Make sure the update is properly visible to client applications
         // Force additional delay to allow the update to propagate
         await new Promise(resolve => setTimeout(resolve, 500));
         
         // Also send an additional notification to Supabase to ensure 
-        // clients are aware of the power state change
+        // clients are aware of the power state change - THIS IS THE FINAL SUCCESS SIGNAL
         await supabase
           .from('scheduled_actions_log')
           .insert({
@@ -254,7 +285,9 @@ serve(async (req) => {
               power_changed_to: state ? "ON" : "OFF",
               timestamp: new Date().toISOString(),
               schedule_id: schedule_id || null,
-              scheduledPowerChange: updateData.scheduledPowerChange
+              scheduledPowerChange: updateData.scheduledPowerChange,
+              direct_execution: direct_execution || false,
+              execution_time_ms: new Date().getTime() - now.getTime()
             }
           });
         
@@ -271,6 +304,22 @@ serve(async (req) => {
         );
       } catch (dbError) {
         console.error("[ERROR] Database operation error:", dbError);
+        
+        // Log the failure to Supabase
+        await supabase
+          .from('scheduled_actions_log')
+          .insert({
+            system_id: system_id,
+            action: "firebase_update_failed",
+            triggered_by: schedule_id ? "schedule" : (manual_execution ? "manual_execution" : "manual_api"),
+            details: { 
+              error: dbError.message,
+              timestamp: executionTime,
+              target_state: state ? "ON" : "OFF",
+              attempts_made: true
+            }
+          });
+          
         throw new Error(`Database operation failed: ${dbError.message}`);
       }
     } catch (error) {
@@ -278,25 +327,20 @@ serve(async (req) => {
       
       // Try to log the error to Supabase if possible
       try {
-        const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-        const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
-        
         // Extract system_id from request if possible
-        let system_id = "unknown";
-        let requestData = {};
-        try {
-          const body = await req.json();
-          system_id = body.system_id || "unknown";
-          requestData = body;
-        } catch (e) {
-          // Ignore parse errors
-        }
+        let system_id_for_log = system_id || "unknown";
+        let requestData = {
+          system_id,
+          state,
+          schedule_id,
+          manual_execution,
+          direct_execution
+        };
         
         await supabase
           .from('scheduled_actions_log')
           .insert({
-            system_id: system_id,
+            system_id: system_id_for_log,
             action: "error",
             triggered_by: "schedule",
             details: { 

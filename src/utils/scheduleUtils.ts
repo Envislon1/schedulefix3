@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { getUTCHHMMFormat } from "./timeUtils";
 
@@ -52,9 +51,10 @@ export async function manuallyTriggerScheduleCheck(
  * 
  * @param scheduleId The ID of the schedule to execute
  * @param systemId The system ID associated with the schedule
+ * @param useDirectExecution Whether to use the more aggressive direct execution mode
  * @returns Response from the scheduled-inverter-control function
  */
-export async function forceExecuteSchedule(scheduleId: string, systemId: string) {
+export async function forceExecuteSchedule(scheduleId: string, systemId: string, useDirectExecution: boolean = true) {
   try {
     // First, get the schedule details
     const { data: schedule, error: scheduleError } = await supabase
@@ -69,6 +69,25 @@ export async function forceExecuteSchedule(scheduleId: string, systemId: string)
     // Log start of execution
     console.log(`Executing schedule ${scheduleId} for system ${systemId} - setting power to ${schedule.state ? 'ON' : 'OFF'}`);
     
+    // Log the execution attempt before calling the function
+    try {
+      await supabase
+        .from('scheduled_actions_log')
+        .insert({
+          system_id: systemId,
+          action: "execute_schedule_attempt",
+          triggered_by: "manual_execution",
+          details: { 
+            schedule_id: scheduleId,
+            power_state: schedule.state,
+            client_time: new Date().toISOString(),
+            direct_execution: useDirectExecution
+          }
+        });
+    } catch (preLogError) {
+      console.error("Failed to log pre-execution attempt:", preLogError);
+    }
+    
     // Execute the schedule by calling the scheduled-inverter-control function directly
     const { data, error } = await supabase.functions.invoke("scheduled-inverter-control", {
       method: "POST",
@@ -78,7 +97,8 @@ export async function forceExecuteSchedule(scheduleId: string, systemId: string)
         user_email: "manual-execution@user.request",
         schedule_id: scheduleId,
         trigger_time: schedule.trigger_time,
-        manual_execution: true
+        manual_execution: true,
+        direct_execution: useDirectExecution
       }
     });
 
@@ -96,7 +116,8 @@ export async function forceExecuteSchedule(scheduleId: string, systemId: string)
             schedule_id: scheduleId,
             power_state: schedule.state,
             result: data,
-            client_time: new Date().toISOString()
+            client_time: new Date().toISOString(),
+            direct_execution: useDirectExecution
           }
         });
     } catch (logError) {
@@ -339,6 +360,53 @@ export async function fixScheduleTimeFormat(scheduleId: string) {
     };
   } catch (error) {
     console.error("Error fixing schedule time format:", error);
+    throw error;
+  }
+}
+
+/**
+ * Direct execution to Firebase 
+ * Use this when other methods have failed to bring reliability
+ */
+export async function directFirebaseExecution(systemId: string, powerState: boolean) {
+  try {
+    // Log the attempt
+    await logScheduleDiagnostics(systemId, "Starting direct Firebase execution", {
+      target_state: powerState ? "ON" : "OFF",
+      timestamp: new Date().toISOString()
+    });
+    
+    // Call the scheduled-inverter-control function with direct execution flag
+    const { data, error } = await supabase.functions.invoke("scheduled-inverter-control", {
+      method: "POST",
+      body: {
+        system_id: systemId,
+        state: powerState,
+        user_email: "direct-execution@system.emergency",
+        direct_execution: true,
+        manual_execution: true
+      }
+    });
+    
+    if (error) throw error;
+    
+    await logScheduleDiagnostics(systemId, "Direct Firebase execution completed", {
+      target_state: powerState ? "ON" : "OFF",
+      result: data,
+      timestamp: new Date().toISOString()
+    });
+    
+    return {
+      success: true,
+      data,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error("Error in direct Firebase execution:", error);
+    await logScheduleDiagnostics(systemId, "Direct Firebase execution failed", {
+      error: error instanceof Error ? error.message : "Unknown error",
+      timestamp: new Date().toISOString()
+    });
     throw error;
   }
 }
