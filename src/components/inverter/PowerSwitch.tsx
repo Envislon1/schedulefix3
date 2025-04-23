@@ -22,6 +22,7 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
   
   const [lastScheduleAction, setLastScheduleAction] = useState<string | null>(null);
   const [debugMode, setDebugMode] = useState(false);
+  const [isScheduleTriggered, setIsScheduleTriggered] = useState(false);
 
   // Listen for schedule actions on this system
   useEffect(() => {
@@ -44,16 +45,28 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
         const latestAction = data[0];
         setLastScheduleAction(`${latestAction.action} at ${new Date(latestAction.created_at).toLocaleTimeString()}`);
         
-        // Show a toast for debug purposes
-        if (latestAction.triggered_by === 'schedule') {
+        // Extract success status from details if available
+        let success = false;
+        if (latestAction.details && 
+            typeof latestAction.details === 'object' && 
+            'success' in latestAction.details) {
+          success = Boolean(latestAction.details.success);
+        }
+        
+        // Show a toast for schedule actions
+        if (latestAction.triggered_by === 'schedule' || latestAction.action === 'schedule_execution_completed') {
+          // Highlight the power switch to show the schedule affected it
+          setIsScheduleTriggered(true);
+          setTimeout(() => setIsScheduleTriggered(false), 5000);
+          
           toast({
-            title: "Schedule Action Detected",
-            description: `The system received a ${latestAction.action} command from a schedule`,
+            title: success ? "Schedule Executed Successfully" : "Schedule Action Detected",
+            description: `System power was set to ${latestAction.action === 'power_on' ? 'ON' : 'OFF'} by a schedule`,
           });
           
-          // Highlight the switch for a moment
+          // Enable debug mode temporarily to show more info
           setDebugMode(true);
-          setTimeout(() => setDebugMode(false), 5000);
+          setTimeout(() => setDebugMode(false), 10000);
         }
       }
     };
@@ -61,8 +74,8 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
     // Initial fetch
     fetchScheduleActions();
     
-    // Set up interval to check every 30 seconds
-    const interval = setInterval(fetchScheduleActions, 30000);
+    // Set up interval to check every 10 seconds (more frequent for better responsiveness)
+    const interval = setInterval(fetchScheduleActions, 10000);
     
     return () => clearInterval(interval);
   }, [systemId]);
@@ -85,7 +98,10 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
   };
 
   return (
-    <div className={`flex items-center justify-between p-4 ${debugMode ? 'bg-orange-500/20 border border-orange-500 animate-pulse' : 'bg-black/40'} rounded-lg`}>
+    <div className={`flex items-center justify-between p-4 
+      ${isScheduleTriggered ? 'bg-orange-500/30 border border-orange-500 animate-pulse' : 
+       debugMode ? 'bg-orange-500/20 border border-orange-500/50' : 'bg-black/40'} 
+      rounded-lg transition-all duration-300`}>
       <div className="flex flex-col">
         <div className="flex items-center space-x-2">
           <Power className={`h-5 w-5 ${inverterState ? "text-orange-500" : "text-gray-500"}`} />
@@ -103,7 +119,7 @@ export const PowerSwitch = ({ inverterId, initialState = false }: PowerSwitchPro
         id={`power-switch-${inverterId}`}
         checked={inverterState}
         onCheckedChange={handleToggle}
-        className={`${debugMode ? 'ring-2 ring-orange-500' : ''} data-[state=checked]:bg-orange-500`}
+        className={`${isScheduleTriggered ? 'ring-2 ring-orange-500' : ''} data-[state=checked]:bg-orange-500`}
       />
     </div>
   );

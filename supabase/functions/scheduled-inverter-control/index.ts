@@ -184,6 +184,26 @@ serve(async (req) => {
             }
           });
         
+        // Make sure the update is properly visible to client applications
+        // Force additional delay to allow the update to propagate
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Also send an additional notification to Supabase to ensure 
+        // clients are aware of the power state change
+        await supabase
+          .from('scheduled_actions_log')
+          .insert({
+            system_id: system_id,
+            action: "schedule_execution_completed",
+            triggered_by: schedule_id ? "schedule" : (manual_execution ? "manual_execution" : "manual_api"),
+            details: { 
+              success: true,
+              power_changed_to: state ? "ON" : "OFF",
+              timestamp: new Date().toISOString(),
+              schedule_id: schedule_id || null
+            }
+          });
+        
         console.log(`[DEBUG] Successfully updated system ${system_id} power state to ${state ? "ON" : "OFF"}`);
         
         return new Response(
