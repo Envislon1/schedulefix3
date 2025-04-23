@@ -19,6 +19,7 @@ interface ScheduledControlParams {
   trigger_time?: string;
   test_mode?: boolean; // Added for debugging
   manual_execution?: boolean; // Flag for direct manual execution
+  diagnostic_check?: boolean; // Added to support connection checks
 }
 
 serve(async (req) => {
@@ -44,7 +45,7 @@ serve(async (req) => {
     const database = getDatabase(app);
     
     // Get the request body
-    const { system_id, state, user_email, schedule_id, trigger_time, test_mode, manual_execution } = await req.json() as ScheduledControlParams;
+    const { system_id, state, user_email, schedule_id, trigger_time, test_mode, manual_execution, diagnostic_check } = await req.json() as ScheduledControlParams;
     
     const now = new Date();
     const executionTime = now.toISOString();
@@ -52,6 +53,38 @@ serve(async (req) => {
     console.log(`[DEBUG] Received request to set system ${system_id} power state to ${state ? "ON" : "OFF"} from ${user_email || "unknown"}`);
     console.log(`[DEBUG] Schedule details: ID=${schedule_id || "manual"}, Trigger time=${trigger_time || "manual"}, Current time=${executionTime}`);
     console.log(`[DEBUG] Execution type: ${manual_execution ? "Manual execution" : "Scheduled"}, Test mode: ${test_mode ? "YES" : "NO"}`);
+
+    // If this is a diagnostic check only, just verify Firebase connection
+    if (diagnostic_check) {
+      console.log(`[DEBUG] Running diagnostic check for system ${system_id}`);
+      
+      try {
+        // Just retrieve the data to verify connection
+        const firebasePath = `/_${system_id}`;
+        const systemRef = ref(database, firebasePath);
+        const snapshot = await get(systemRef);
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            connection_status: "Connected successfully to Firebase",
+            timestamp: executionTime,
+            data_exists: snapshot.exists()
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      } catch (diagError) {
+        console.error("[ERROR] Diagnostic check failed:", diagError);
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            connection_status: `Connection failed: ${diagError.message}`,
+            timestamp: executionTime
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
+        );
+      }
+    }
 
     if (!system_id) {
       console.error("[ERROR] Missing system_id parameter");
@@ -81,20 +114,23 @@ serve(async (req) => {
       console.log(`[DEBUG] Current power state: ${currentData.power || 0}`);
       
       // The data to update in Firebase, preserving other values
+      // IMPORTANT FIX: Ensure the scheduledPowerChange object is properly formatted and included
       const updateData = {
         ...currentData,
         power: state ? 1 : 0,
         lastUpdate: new Date().toISOString(),
         lastUserPower: user_email || (schedule_id ? `scheduled-task:${schedule_id}` : "manual-task@system.auto"),
+        // Ensure this is properly formatted as an object with all required fields
         scheduledPowerChange: {
           timestamp: new Date().toISOString(),
           schedule_id: schedule_id || "manual",
-          triggered_by: user_email || "schedule-system",
+          triggered_by: user_email || (manual_execution ? "manual_execution" : "schedule-system"),
           state: state ? 1 : 0
         }
       };
       
       console.log(`[DEBUG] Attempting to set system ${system_id} power state to ${state ? "ON" : "OFF"} with data:`, JSON.stringify(updateData));
+      console.log(`[DEBUG] scheduledPowerChange data:`, JSON.stringify(updateData.scheduledPowerChange));
       
       try {
         // Update the Firebase database with retry logic
@@ -130,16 +166,27 @@ serve(async (req) => {
         console.log(`[DEBUG] Verification data from Firebase:`, JSON.stringify(verifyData));
         
         const powerStateUpdated = verifyData.power === (state ? 1 : 0);
-        console.log(`[DEBUG] Power state verification: expected=${state ? 1 : 0}, actual=${verifyData.power}, match=${powerStateUpdated}`);
+        const schedulePowerChangeUpdated = verifyData.scheduledPowerChange && 
+                                          verifyData.scheduledPowerChange.state === (state ? 1 : 0);
         
-        if (!powerStateUpdated) {
-          console.error(`[ERROR] Firebase update verification failed: power state did not update correctly`);
+        console.log(`[DEBUG] Power state verification: expected=${state ? 1 : 0}, actual=${verifyData.power}, match=${powerStateUpdated}`);
+        console.log(`[DEBUG] scheduledPowerChange verification: updated=${schedulePowerChangeUpdated}, value=`, 
+                   JSON.stringify(verifyData.scheduledPowerChange));
+        
+        if (!powerStateUpdated || !schedulePowerChangeUpdated) {
+          console.error(`[ERROR] Firebase update verification failed: power state or scheduledPowerChange did not update correctly`);
           
           // Try one more time with direct power update
           const emergencyUpdate = {
             power: state ? 1 : 0,
             lastUpdate: new Date().toISOString(),
             lastUserPower: `emergency-retry:${user_email || "system"}`,
+            scheduledPowerChange: {
+              timestamp: new Date().toISOString(),
+              schedule_id: schedule_id || "emergency-retry",
+              triggered_by: "emergency-retry-system",
+              state: state ? 1 : 0
+            },
             retryReason: "verification_failed"
           };
           
@@ -150,12 +197,17 @@ serve(async (req) => {
           const finalVerifySnapshot = await get(systemRef);
           const finalVerifyData = finalVerifySnapshot.val() || {};
           const finalPowerState = finalVerifyData.power === (state ? 1 : 0);
-          console.log(`[DEBUG] Final verification: expected=${state ? 1 : 0}, actual=${finalVerifyData.power}, match=${finalPowerState}`);
+          const finalScheduleUpdateState = finalVerifyData.scheduledPowerChange && 
+                                         finalVerifyData.scheduledPowerChange.state === (state ? 1 : 0);
           
-          if (!finalPowerState) {
-            throw new Error("Firebase power state verification failed after emergency retry");
+          console.log(`[DEBUG] Final verification: expected power=${state ? 1 : 0}, actual=${finalVerifyData.power}, match=${finalPowerState}`);
+          console.log(`[DEBUG] Final scheduledPowerChange verification: updated=${finalScheduleUpdateState}, value=`, 
+                     JSON.stringify(finalVerifyData.scheduledPowerChange));
+          
+          if (!finalPowerState || !finalScheduleUpdateState) {
+            throw new Error("Firebase power state and scheduledPowerChange verification failed after emergency retry");
           } else {
-            console.log("[DEBUG] Emergency retry SUCCESS - power state set correctly");
+            console.log("[DEBUG] Emergency retry SUCCESS - power state and scheduledPowerChange set correctly");
           }
         }
         
@@ -179,7 +231,8 @@ serve(async (req) => {
               verification: {
                 verified: true,
                 expected: state ? 1 : 0,
-                actual: verifyData.power
+                actual: verifyData.power,
+                scheduledPowerChange: verifyData.scheduledPowerChange
               }
             }
           });
@@ -200,7 +253,8 @@ serve(async (req) => {
               success: true,
               power_changed_to: state ? "ON" : "OFF",
               timestamp: new Date().toISOString(),
-              schedule_id: schedule_id || null
+              schedule_id: schedule_id || null,
+              scheduledPowerChange: updateData.scheduledPowerChange
             }
           });
         
