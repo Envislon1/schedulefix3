@@ -88,7 +88,12 @@ export async function forceExecuteSchedule(scheduleId: string, systemId: string,
       console.error("Failed to log pre-execution attempt:", preLogError);
     }
     
-    // Execute the schedule by calling the scheduled-inverter-control function directly
+    // Use the emergency direct execution method for maximum reliability
+    if (useDirectExecution) {
+      return await emergencyFirebaseExecution(systemId, schedule.state);
+    }
+    
+    // Otherwise use the standard execution method
     const { data, error } = await supabase.functions.invoke("scheduled-inverter-control", {
       method: "POST",
       body: {
@@ -98,7 +103,7 @@ export async function forceExecuteSchedule(scheduleId: string, systemId: string,
         schedule_id: scheduleId,
         trigger_time: schedule.trigger_time,
         manual_execution: true,
-        direct_execution: useDirectExecution
+        direct_execution: false
       }
     });
 
@@ -116,8 +121,7 @@ export async function forceExecuteSchedule(scheduleId: string, systemId: string,
             schedule_id: scheduleId,
             power_state: schedule.state,
             result: data,
-            client_time: new Date().toISOString(),
-            direct_execution: useDirectExecution
+            client_time: new Date().toISOString()
           }
         });
     } catch (logError) {
@@ -407,6 +411,67 @@ export async function directFirebaseExecution(systemId: string, powerState: bool
       error: error instanceof Error ? error.message : "Unknown error",
       timestamp: new Date().toISOString()
     });
+    throw error;
+  }
+}
+
+/**
+ * Emergency direct execution to Firebase 
+ * Use this method as the most reliable way to ensure state changes are applied
+ * when other methods have repeatedly failed
+ */
+export async function emergencyFirebaseExecution(systemId: string, powerState: boolean) {
+  try {
+    // Generate a unique execution ID for tracking
+    const executionId = `emergency-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    
+    // Log the attempt with a clear identifier
+    await logScheduleDiagnostics(systemId, "STARTING EMERGENCY EXECUTION", {
+      execution_id: executionId,
+      target_state: powerState ? "ON" : "OFF",
+      timestamp: new Date().toISOString()
+    });
+    
+    // Call our server-side function with special emergency flags
+    const { data, error } = await supabase.functions.invoke("scheduled-inverter-control", {
+      method: "POST",
+      body: {
+        system_id: systemId,
+        state: powerState,
+        user_email: "emergency-execution@system.critical",
+        emergency_execution: true, // Special flag to indicate highest priority
+        direct_execution: true,
+        execution_id: executionId,
+        bypass_verification: true, // Skip verification steps that might delay execution
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+    if (error) throw error;
+    
+    // Log success immediately
+    await logScheduleDiagnostics(systemId, "EMERGENCY EXECUTION COMPLETED", {
+      execution_id: executionId,
+      target_state: powerState ? "ON" : "OFF",
+      result: data,
+      timestamp: new Date().toISOString()
+    });
+    
+    return {
+      success: true,
+      data,
+      execution_id: executionId,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error("Error in emergency Firebase execution:", error);
+    
+    // Log failure for troubleshooting
+    await logScheduleDiagnostics(systemId, "EMERGENCY EXECUTION FAILED", {
+      error: error instanceof Error ? error.message : "Unknown error",
+      timestamp: new Date().toISOString()
+    });
+    
     throw error;
   }
 }

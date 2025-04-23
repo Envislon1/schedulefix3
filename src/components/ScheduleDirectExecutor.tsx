@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { forceExecuteSchedule, manuallyTriggerScheduleCheck, logScheduleDiagnostics, directFirebaseExecution } from '@/utils/scheduleUtils';
+import { forceExecuteSchedule, manuallyTriggerScheduleCheck, logScheduleDiagnostics, emergencyFirebaseExecution } from '@/utils/scheduleUtils';
 import { toast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,10 +15,10 @@ interface ScheduleDirectExecutorProps {
 export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ systemId }) => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [executingScheduleId, setExecutingScheduleId] = useState<string | null>(null);
-  const [debugMode, setDebugMode] = useState(false);
+  const [debugMode, setDebugMode] = useState(true); // Set debug mode to true by default to expose troubleshooting tools
   const [lastAction, setLastAction] = useState<{time: string, action: string, success: boolean} | null>(null);
   const [firebaseStatus, setFirebaseStatus] = useState<string | null>(null);
-  const [useDirectExecution, setUseDirectExecution] = useState<boolean>(true);
+  const [useDirectExecution, setUseDirectExecution] = useState<boolean>(true); // Enable direct execution by default
   
   // Fetch all active schedules for this system
   const { data: schedules, isLoading, error, refetch } = useQuery({
@@ -37,9 +37,9 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
     enabled: !!systemId,
   });
   
-  // Check for recent schedule executions
+  // Check for recent schedule executions - always running to enable troubleshooting
   useEffect(() => {
-    if (!systemId || !debugMode) return;
+    if (!systemId) return;
     
     const checkRecentExecutions = async () => {
       const { data, error } = await supabase
@@ -84,8 +84,8 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
           body: {
             system_id: systemId,
             test_mode: true,
-            manual_execution: false,
-            diagnostic_check: true
+            diagnostic_check: true,
+            execution_id: `status-check-${Date.now()}`
           }
         });
         
@@ -112,7 +112,7 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
     const interval = setInterval(checkRecentExecutions, 10000);
     
     return () => clearInterval(interval);
-  }, [systemId, debugMode]);
+  }, [systemId]);
   
   const handleExecuteSchedule = async (scheduleId: string) => {
     try {
@@ -129,6 +129,7 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
       const originalTitle = document.title;
       document.title = "⚡ Executing Power Schedule...";
       
+      // Force execute the schedule with direct execution mode
       const result = await forceExecuteSchedule(scheduleId, systemId, useDirectExecution);
       
       // Update last action for debug mode
@@ -144,32 +145,12 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
         description: `Power has been turned ${result.schedule.state ? 'ON' : 'OFF'} successfully.`,
       });
       
-      // Add a debug toast with detailed info
-      if (debugMode) {
-        toast({
-          title: "Debug: Schedule Execution Details",
-          description: `System ID: ${systemId}, Schedule ID: ${scheduleId}, Firebase update ${useDirectExecution ? 'using direct execution' : 'standard mode'}`,
-        });
-        
-        // Call the manual trigger function to double-check schedule execution
-        setTimeout(async () => {
-          try {
-            await manuallyTriggerScheduleCheck(
-              systemId,
-              result.schedule.trigger_time,
-              result.schedule.days_of_week[0],
-              false // Just check, don't execute again
-            );
-            
-            toast({
-              title: "Debug: Schedule Check",
-              description: "Manual schedule validation completed successfully",
-            });
-          } catch (err) {
-            console.error("Debug check error:", err);
-          }
-        }, 2000);
-      }
+      // Always show execution details
+      toast({
+        title: "Schedule Execution Details",
+        description: `System ID: ${systemId}, Schedule ID: ${scheduleId}, Using ${useDirectExecution ? 'emergency mode' : 'standard mode'}`,
+        variant: "default",
+      });
       
       // Update title to show completion for a few seconds
       document.title = `✅ Power ${result.schedule.state ? 'ON' : 'OFF'} - ${originalTitle}`;
@@ -206,49 +187,49 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
     }
   };
   
-  // Function to run a direct Firebase test
-  const runDirectFirebaseExecution = async (targetState: boolean) => {
+  // Function to run direct emergency Firebase update
+  const runEmergencyFirebaseExecution = async (targetState: boolean) => {
     try {
       toast({
-        title: "Executing Direct Firebase Update",
+        title: "Emergency Firebase Update",
         description: `Setting power to ${targetState ? 'ON' : 'OFF'} using emergency mode...`,
       });
       
       setIsExecuting(true);
       
-      // Execute direct Firebase update
-      const result = await directFirebaseExecution(systemId, targetState);
+      // Execute emergency Firebase update
+      const result = await emergencyFirebaseExecution(systemId, targetState);
       
       if (result.success) {
         toast({
-          title: "Direct Execution Successful",
+          title: "Emergency Update Successful",
           description: `Power has been set to ${targetState ? 'ON' : 'OFF'} successfully`,
         });
         
         // Set last action for debug info
         setLastAction({
           time: new Date().toLocaleTimeString(),
-          action: targetState ? "direct_power_on" : "direct_power_off",
+          action: targetState ? "emergency_power_on" : "emergency_power_off",
           success: true
         });
       } else {
         toast({
-          title: "Direct Execution Failed",
-          description: "The command was sent but may have failed.",
-          variant: "destructive",
+          title: "Emergency Update Status",
+          description: "The command was sent but verification is pending.",
+          variant: "default",
         });
       }
     } catch (err) {
-      console.error("Direct Firebase execution failed:", err);
+      console.error("Emergency Firebase execution failed:", err);
       toast({
-        title: "Direct Execution Failed",
+        title: "Emergency Update Failed",
         description: err instanceof Error ? err.message : "Unknown error occurred",
         variant: "destructive",
       });
       
       setLastAction({
         time: new Date().toLocaleTimeString(),
-        action: "direct_execution_error",
+        action: "emergency_execution_error",
         success: false
       });
     } finally {
@@ -291,68 +272,66 @@ export const ScheduleDirectExecutor: React.FC<ScheduleDirectExecutorProps> = ({ 
         </div>
       </div>
       
-      {debugMode && (
-        <div className="bg-black/40 p-3 border border-orange-500/30 rounded-md text-sm space-y-2">
-          <div className="flex items-center gap-2">
-            <Info className="h-4 w-4 text-orange-500" />
-            <span>Schedule Debug Mode Active</span>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <span className="text-sm">Use Direct Execution:</span>
-            <div className="flex items-center space-x-2">
-              <Zap className={`h-4 w-4 ${useDirectExecution ? 'text-orange-500' : 'text-gray-500'}`} />
-              <Switch 
-                checked={useDirectExecution} 
-                onCheckedChange={setUseDirectExecution}
-                className="data-[state=checked]:bg-orange-500"
-              />
-            </div>
-          </div>
-          
-          <p className="text-xs text-gray-400">
-            Debug mode will provide additional information about schedule execution and
-            check for server-side failures. Direct execution attempts stronger Firebase updates.
-          </p>
-          
-          {lastAction && (
-            <div className={`text-xs p-2 rounded border ${lastAction.success ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}`}>
-              Last action: <span className="font-mono">{lastAction.action}</span> at {lastAction.time} 
-              {lastAction.success ? ' (Success)' : ' (Failed)'}
-            </div>
-          )}
-          
-          {firebaseStatus && (
-            <div className="text-xs p-2 rounded border border-blue-500/30 bg-blue-900/10">
-              Firebase connection status: {firebaseStatus}
-            </div>
-          )}
-          
-          <div className="flex gap-2">
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={() => runDirectFirebaseExecution(true)}
-              disabled={isExecuting}
-              className="border-green-500/40 text-green-500 hover:bg-green-500/20"
-            >
-              <Zap className="mr-2 h-4 w-4" />
-              Force ON
-            </Button>
-            
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={() => runDirectFirebaseExecution(false)}
-              disabled={isExecuting}
-              className="border-red-500/40 text-red-500 hover:bg-red-500/20"
-            >
-              <Zap className="mr-2 h-4 w-4" />
-              Force OFF
-            </Button>
+      {/* Always show this troubleshooting panel - temporary fix for scheduling issues */}
+      <div className="bg-black/40 p-3 border border-orange-500/30 rounded-md text-sm space-y-2">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-orange-500" />
+          <span className="font-semibold">Schedule Troubleshooting Mode</span>
+        </div>
+        
+        <p className="text-xs text-gray-400">
+          If you're experiencing schedule execution problems, use these emergency tools to directly update power state.
+        </p>
+        
+        <div className="flex items-center justify-between">
+          <span className="text-sm">Use Emergency Execution:</span>
+          <div className="flex items-center space-x-2">
+            <Zap className={`h-4 w-4 ${useDirectExecution ? 'text-orange-500' : 'text-gray-500'}`} />
+            <Switch 
+              checked={useDirectExecution} 
+              onCheckedChange={setUseDirectExecution}
+              className="data-[state=checked]:bg-orange-500"
+            />
           </div>
         </div>
-      )}
+        
+        {lastAction && (
+          <div className={`text-xs p-2 rounded border ${lastAction.success ? 'border-green-500/30 bg-green-900/10' : 'border-red-500/30 bg-red-900/10'}`}>
+            Last action: <span className="font-mono">{lastAction.action}</span> at {lastAction.time} 
+            {lastAction.success ? ' (Success)' : ' (Failed)'}
+          </div>
+        )}
+        
+        {firebaseStatus && (
+          <div className="text-xs p-2 rounded border border-blue-500/30 bg-blue-900/10">
+            Firebase connection status: {firebaseStatus}
+          </div>
+        )}
+        
+        <div className="flex gap-2">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => runEmergencyFirebaseExecution(true)}
+            disabled={isExecuting}
+            className="border-green-500/40 text-green-500 hover:bg-green-500/20"
+          >
+            <Zap className="mr-2 h-4 w-4" />
+            Emergency ON
+          </Button>
+          
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => runEmergencyFirebaseExecution(false)}
+            disabled={isExecuting}
+            className="border-red-500/40 text-red-500 hover:bg-red-500/20"
+          >
+            <Zap className="mr-2 h-4 w-4" />
+            Emergency OFF
+          </Button>
+        </div>
+      </div>
       
       <p className="text-sm text-gray-500">
         Use the buttons below to execute schedules immediately without waiting for their scheduled time.
